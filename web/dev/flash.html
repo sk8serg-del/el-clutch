@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stark Clutch — Flash Tool</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f4f4f9; margin: 0; padding: 20px; }
+    .container { max-width: 500px; margin: 0 auto; }
+    h1 { text-align: center; font-size: 22px; margin-bottom: 4px; }
+    .subtitle { text-align: center; font-size: 13px; color: #aaa; margin-bottom: 20px; }
+    .card { background: white; border-radius: 10px; padding: 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.1); margin-bottom: 12px; }
+    label { display: block; font-size: 13px; font-weight: bold; color: #555; margin-bottom: 6px; }
+    input[type="file"] { display: block; width: 100%; font-size: 14px; margin-bottom: 14px; box-sizing: border-box; }
+    .btn { width: 100%; padding: 12px; font-size: 16px; color: white; border: none; border-radius: 6px; cursor: pointer; margin-bottom: 8px; }
+    .btn-latest  { background: #4caf50; }
+    .btn-latest:hover  { background: #388e3c; }
+    .btn-file    { background: #607d8b; }
+    .btn-file:hover    { background: #546e7a; }
+    .btn:disabled { background: #aaa; cursor: not-allowed; }
+    .note { font-size: 12px; color: #aaa; text-align: center; margin: 4px 0 0; }
+    progress { width: 100%; height: 18px; margin-top: 10px; }
+    #statusMsg { font-size: 13px; color: #555; text-align: center; min-height: 20px; margin-top: 6px; word-break: break-word; }
+    .checkbox-row { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; font-size: 14px; color: #555; }
+    .checkbox-row input { width: auto; margin: 0; }
+    .divider { border: none; border-top: 1px solid #eee; margin: 14px 0; }
+    #progressWrap { display: none; }
+    .version-line { text-align: center; font-size: 14px; margin: 0 0 14px; color: #555; }
+    .version-line b { color: #4caf50; }
+    .btn-read { background: #2a86d6; }
+    .btn-read:hover { background: #1a6ab6; }
+    #serialOut {
+      display: none; background: #1e1e1e; color: #d4d4d4;
+      font-family: monospace; font-size: 12px;
+      padding: 10px; border-radius: 6px; margin-top: 10px;
+      max-height: 160px; overflow-y: auto; white-space: pre-wrap;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>Stark Clutch</h1>
+  <p class="subtitle">USB Flash Tool &middot; Chrome / Edge only</p>
+
+  <div class="card">
+    <p class="version-line">Latest: <b id="latestVer">loading...</b></p>
+    <p class="version-line">Board: <b id="boardInfo" style="color:#555;">detected when you connect</b></p>
+
+    <div class="checkbox-row">
+      <input type="checkbox" id="eraseNvsCheck">
+      <span>Erase NVS (reset all settings &amp; calibration)</span>
+    </div>
+
+    <button class="btn btn-latest" id="flashLatestBtn">⬇ Download &amp; Flash Latest</button>
+
+    <hr class="divider">
+
+    <label>or choose .bin file manually</label>
+    <input type="file" id="binFile" accept=".bin">
+    <button class="btn btn-file" id="flashFileBtn">Flash from File</button>
+
+    <p class="note">Web Serial API &middot; hold BOOT button when prompted</p>
+
+    <hr class="divider">
+    <button class="btn btn-read" id="readVerBtn">Read Version from Device</button>
+    <p class="note">Connect device, press Read, then press Reset button on board</p>
+    <div id="serialOut"></div>
+
+    <div id="progressWrap">
+      <hr class="divider">
+      <progress id="progressBar" value="0" max="100"></progress>
+      <p id="progressTxt" style="text-align:center; font-size:13px; margin:4px 0;">0%</p>
+    </div>
+    <p id="statusMsg"></p>
+  </div>
+</div>
+
+<script>
+// Страница должна работать одним файлом (например, открытая с Google Drive на телефоне),
+// поэтому проверка встроена. Такая же копия есть в соседней странице — менять вместе.
+// Какая прошивка подходит какой плате. Плата определяет железо, других сочетаний нет.
+// minRelease: релизы с firmware_s3.bin до этой версии собраны для другого железа.
+const FW_BOARDS = {
+  C3: { hw: 'CLUTCH',     title: 'XIAO ESP32-C3', parts: 'ESP32 ADC + MCP4725', chipId: 0x0005, file: 'firmware_c3.bin', minRelease: null },
+  S3: { hw: 'CLUTCH_CAN', title: 'XIAO ESP32-S3', parts: 'ADS1115 + MCP4728',   chipId: 0x0009, file: 'firmware_s3.bin', minRelease: '2.15.0' },
+};
+
+// Строка версии прошивки: "2.15.0-S3"
+function fwBoardFromVersion(version) {
+  const m = /-([CS]3)$/.exec((version || '').trim());
+  return m ? m[1] : null;
+}
+
+// Название чипа от esptool: "ESP32-S3 (revision v0.2)"
+function fwBoardFromChipName(name) {
+  const m = /ESP32-([CS]3)/i.exec(name || '');
+  return m ? m[1].toUpperCase() : null;
+}
+
+function fwVersionAtLeast(version, min) {
+  const a = version.split('.').map(Number), b = min.split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0);
+  }
+  return true;
+}
+
+// Примерное оставшееся время по средней скорости с начала записи. Первые секунды
+// скорость ещё не устоялась, поэтому оценки нет. Если счётчик пошёл заново
+// (USB пишет несколько областей подряд), отсчёт начинается заново.
+function fwEta(now = () => Date.now()) {
+  let startMs = 0, startBytes = 0, last = -1;
+  return (written, total) => {
+    if (written < last || last < 0) { startMs = now(); startBytes = written; }
+    last = written;
+    const elapsed = (now() - startMs) / 1000, done = written - startBytes;
+    if (written >= total || elapsed < 2 || done <= 0) return '';
+    const left = Math.round((total - written) * elapsed / done / 5) * 5;  // с шагом 5 с, чтобы не прыгало
+    if (left < 5) return '  ·  a few seconds left';
+    const min = Math.floor(left / 60), sec = left % 60;
+    return '  ·  ~' + [min && min + ' min', sec && sec + ' s'].filter(Boolean).join(' ') + ' left';
+  };
+}
+
+// Что внутри .bin: { board, hw, version }, null — неизвестно. Бросает, если это не образ приложения.
+function fwInspect(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  // Заголовок образа ESP32 и описание приложения за ним. Полный образ из нескольких
+  // частей (merged) начинается с загрузчика, описания приложения в этом месте нет.
+  if (bytes.length < 64 || bytes[0] !== 0xE9 || view.getUint32(32, true) !== 0xABCD5432)
+    throw new Error('This is not an application firmware file');
+
+  const chipId = view.getUint16(12, true);
+  const board = Object.keys(FW_BOARDS).find(k => FW_BOARDS[k].chipId === chipId) || null;
+
+  const text = new TextDecoder('latin1').decode(bytes);
+  const id = /STARKFWID\|(\w+)\|([CS]3)\|([\d.]+)\|/.exec(text);
+  if (id) return { board, hw: id[1], version: id[3] };
+
+  // Прошивки до 2.15.0: явного идентификатора нет, но железо видно по строкам
+  let hw = null;
+  if (text.includes('\0CLUTCH_CAN\0') || text.includes('adsErr=')) hw = 'CLUTCH_CAN';
+  else if (text.includes('\0CLUTCH\0')) hw = 'CLUTCH';
+  const ver = /(\d+\.\d+\.\d+)-[CS]3/.exec(text);
+  return { board, hw, version: ver ? ver[1] : null };
+}
+
+// Бросает с понятным сообщением, если файл нельзя шить на эту плату.
+// trustedRelease: файл из своих релизов, а там под C3 всегда был только CLUTCH.
+function fwAssertFits(bytes, board, { trustedRelease = false } = {}) {
+  const target = FW_BOARDS[board];
+  if (!target) throw new Error('Cannot determine the connected board, flashing is blocked');
+  const info = fwInspect(bytes);
+  if (info.board !== board) {
+    const other = FW_BOARDS[info.board];
+    throw new Error(`Wrong firmware: this file is for ${other ? other.title : 'another chip'}, connected board is ${target.title}`);
+  }
+  if (info.hw && info.hw !== target.hw)
+    throw new Error(`Wrong firmware: this file is for ${info.hw} hardware, connected board is ${target.hw}`);
+  // Релизы под S3 до minRelease собраны для другого железа, метки в них может не быть
+  if (trustedRelease && target.minRelease && !(info.version && fwVersionAtLeast(info.version, target.minRelease)))
+    throw new Error(`Firmware ${info.version || ''} from the site is not for ${target.hw} hardware`);
+  if (!info.hw && !trustedRelease) {
+    const e = new Error(`This old firmware file does not say which hardware it is for (this board needs ${target.hw})`);
+    e.unknownHardware = true;  // чип совпал, железо неизвестно: решает пользователь
+    throw e;
+  }
+  return info;
+}
+
+// То же, но старый файл без метки железа можно прошить после подтверждения.
+// Файл для другого чипа или с чужой меткой не прошивается никогда.
+function fwCheckWithConfirm(bytes, board, options) {
+  try {
+    return fwAssertFits(bytes, board, options);
+  } catch(e) {
+    const target = FW_BOARDS[board];
+    const ok = e.unknownHardware && confirm(
+      `This old firmware file does not say which hardware it is for.\n` +
+      `Connected board: ${target.title}, needs ${target.hw} (${target.parts}).\n\n` +
+      `Flash only if you are sure this file is for ${target.hw}. Press OK to flash.`);
+    if (!ok) throw e;
+    return fwInspect(bytes);
+  }
+}
+</script>
+<script>
+  let latestVersion = '';
+
+  fetch('firmware_version.txt?_=' + Date.now())
+    .then(r => r.text())
+    .then(t => {
+      latestVersion = t.trim();
+      document.getElementById('latestVer').textContent = latestVersion || '—';
+    })
+    .catch(() => {
+      document.getElementById('latestVer').textContent = '—';
+    });
+
+  // getFirmware(board) вызывается, когда чип уже определён: чужой файл до записи не доходит
+  async function doFlash(getFirmware, checkOptions) {
+    const status   = document.getElementById('statusMsg');
+    const bar      = document.getElementById('progressBar');
+    const pct      = document.getElementById('progressTxt');
+    const eraseNvs = document.getElementById('eraseNvsCheck').checked;
+
+    document.getElementById('progressWrap').style.display = 'block';
+    bar.value = 0; pct.textContent = '0%'; status.textContent = '';
+
+    if (!('serial' in navigator)) throw new Error('Web Serial not supported — use Chrome or Edge');
+
+    status.textContent = 'Loading flash tool...';
+    if (typeof globalThis.Buffer === 'undefined') {
+      const { Buffer } = await import('https://esm.run/buffer@6.0.3');
+      globalThis.Buffer = Buffer;
+    }
+    const mod = await import('https://cdn.jsdelivr.net/npm/esptool-js@0.4.3/bundle.js');
+    const ESPLoader = mod.ESPLoader ?? mod.default?.ESPLoader;
+    const Transport  = mod.Transport  ?? mod.default?.Transport;
+    if (!ESPLoader || !Transport) throw new Error('esptool-js: ESPLoader/Transport not found');
+
+    const terminal = {
+      clean: () => {},
+      writeLine: (m) => { console.log('[esptool]', m); status.textContent = m; },
+      write:     (m) => { console.log('[esptool]', m); }
+    };
+
+    status.textContent = 'Select USB port — hold BOOT button on device...';
+    const port = await navigator.serial.requestPort();
+    const transport = new Transport(port, true);
+
+    let esploader;
+    try      { esploader = new ESPLoader({ transport, baudrate: 460800, terminal }); }
+    catch(e) { esploader = new ESPLoader(transport, 460800, terminal); }
+
+    status.textContent = 'Connecting...';
+    const chip = typeof esploader.main === 'function'
+      ? await esploader.main()
+      : await esploader.main_fn();
+
+    let firmwareData;
+    try {
+      const board = fwBoardFromChipName(chip);
+      if (!board) throw new Error(`${chip} is not a supported board`);
+      const target = FW_BOARDS[board];
+      document.getElementById('boardInfo').textContent = `${target.title} · ${target.hw} (${target.parts})`;
+      firmwareData = await getFirmware(board);
+      const info = fwCheckWithConfirm(firmwareData, board, checkOptions);
+      status.textContent = `${info.hw || 'Hardware not confirmed'} ${info.version || ''} — writing to ${target.title}`;
+    } catch(e) {
+      await transport.disconnect().catch(() => {});
+      throw e;
+    }
+
+    let binaryStr = '';
+    for (let i = 0; i < firmwareData.length; i += 0x8000)
+      binaryStr += String.fromCharCode.apply(null, firmwareData.subarray(i, i + 0x8000));
+
+    const fileArray = [];
+    if (eraseNvs) {
+      status.textContent = 'Erasing NVS...';
+      const nvsBlank = new Uint8Array(0x5000).fill(0xFF);
+      let nvsStr = '';
+      for (let i = 0; i < nvsBlank.length; i += 0x8000)
+        nvsStr += String.fromCharCode.apply(null, nvsBlank.subarray(i, i + 0x8000));
+      fileArray.push({ data: nvsStr, address: 0x9000 });
+    }
+    // otadata: 0xe000, size 0x2000 — стёртый выбор слота, плата загрузится с app0, куда идёт запись.
+    // Иначе после BLE-обновления активным остался бы app1 со старой прошивкой.
+    fileArray.push({ data: '\xFF'.repeat(0x2000), address: 0xe000 });
+    fileArray.push({ data: binaryStr, address: 0x10000 });
+
+    status.textContent = `${chip} — writing...`;
+    const eta = fwEta();
+    await esploader.writeFlash({
+      fileArray,
+      flashSize: 'keep', flashMode: 'keep', flashFreq: 'keep',
+      eraseAll: false, compress: true,
+      reportProgress: (idx, written, total) => {
+        const p = Math.round(written / total * 100);
+        bar.value = p;
+        pct.textContent = `${p}%  ·  ${(written/1024).toFixed(0)} / ${(total/1024).toFixed(0)} KB` + eta(written, total);
+      }
+    });
+
+    await esploader.hardReset();
+    await transport.disconnect();
+    bar.value = 100; pct.textContent = '100%';
+    status.textContent = '✓ Done! Device rebooting...';
+  }
+
+  async function withBtn(btnId, fn) {
+    const btn = document.getElementById(btnId);
+    btn.disabled = true;
+    document.getElementById('flashLatestBtn').disabled = true;
+    document.getElementById('flashFileBtn').disabled = true;
+    try {
+      await fn();
+    } catch(e) {
+      document.getElementById('statusMsg').textContent = '✗ ' + e.message;
+      console.error(e);
+    } finally {
+      btn.disabled = false;
+      document.getElementById('flashLatestBtn').disabled = false;
+      document.getElementById('flashFileBtn').disabled = false;
+    }
+  }
+
+  document.getElementById('flashLatestBtn').addEventListener('click', () => {
+    withBtn('flashLatestBtn', async () => {
+      const status = document.getElementById('statusMsg');
+      await doFlash(async (board) => {
+        status.textContent = 'Downloading firmware...';
+        const resp = await fetch(FW_BOARDS[board].file + '?_=' + Date.now());
+        if (!resp.ok) throw new Error('Download failed: ' + resp.status);
+        const data = new Uint8Array(await resp.arrayBuffer());
+        status.textContent = `Downloaded ${(data.byteLength / 1024).toFixed(0)} KB`;
+        return data;
+      }, { trustedRelease: true });
+    });
+  });
+
+  document.getElementById('flashFileBtn').addEventListener('click', () => {
+    const file = document.getElementById('binFile').files[0];
+    if (!file) { alert('Select a .bin file first'); return; }
+    withBtn('flashFileBtn', async () => {
+      const data = new Uint8Array(await file.arrayBuffer());
+      await doFlash(() => data);
+    });
+  });
+
+  document.getElementById('readVerBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('readVerBtn');
+    const out = document.getElementById('serialOut');
+    if (!('serial' in navigator)) { alert('Web Serial not supported — use Chrome or Edge'); return; }
+
+    btn.disabled = true;
+    out.style.display = 'block';
+    out.textContent = 'Connecting...';
+
+    let port, reader;
+    try {
+      port = await navigator.serial.requestPort();
+      await port.open({ baudRate: 115200 });
+      // автоматический сброс через RTS → EN pin
+      await port.setSignals({ requestToSend: true,  dataTerminalReady: false });
+      await new Promise(r => setTimeout(r, 100));
+      await port.setSignals({ requestToSend: false, dataTerminalReady: false });
+      out.textContent = 'Resetting...';
+
+      reader = port.readable.getReader();
+      const textDecoder = new TextDecoder();
+
+      let buf = '';
+      const timeout = setTimeout(() => { reader.cancel(); }, 8000);
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += textDecoder.decode(value, { stream: true });
+
+        // с 2.13.0 в начале загрузки: [BOOT] board=CLUTCH_CAN fw=2.15.0-S3
+        const bootMatch = buf.match(/\[BOOT\] board=(\w+) fw=([\w.\-]+)/);
+        if (bootMatch) {
+          const target = FW_BOARDS[fwBoardFromVersion(bootMatch[2])];
+          clearTimeout(timeout);
+          out.textContent = `Board: ${target ? target.title : 'unknown'}\nHardware: ${bootMatch[1]}\nFirmware: ${bootMatch[2]}`;
+          document.getElementById('boardInfo').textContent = target ? `${target.title} · ${bootMatch[1]}` : bootMatch[1];
+          break;
+        }
+
+        // ищем версию в boot сообщении: [OK] Stark Clutch v2.8.1-C3 ready.
+        const okMatch = buf.match(/\[OK\] Stark Clutch (v[\w.\-]+) ready/);
+        if (okMatch) {
+          clearTimeout(timeout);
+          out.textContent = 'Firmware: ' + okMatch[1];
+          break;
+        }
+
+        // запасной вариант — из потока данных: FW:2.8.1-C3
+        const fwMatch = buf.match(/FW:([\w.\-]+)/);
+        if (fwMatch) out.textContent = 'Firmware: ' + fwMatch[1] + ' (reading boot log...)';
+      }
+    } catch(e) {
+      if (!e.message.includes('cancelled')) out.textContent = '✗ ' + e.message;
+      else if (!out.textContent.startsWith('Firmware')) out.textContent = 'Firmware: 1.0';
+    } finally {
+      try { await reader.cancel(); reader.releaseLock(); } catch(e) {}
+      try { await port.close(); } catch(e) {}
+      btn.disabled = false;
+    }
+  });
+</script>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-07 14:39</p>
+</body>
+</html>
