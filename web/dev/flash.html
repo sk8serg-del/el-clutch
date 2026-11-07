@@ -189,14 +189,22 @@ function fwCheckWithConfirm(bytes, board, options) {
   let latestVersion = '';
 
   fetch('firmware_version.txt?_=' + Date.now())
-    .then(r => r.text())
+    .then(r => r.ok ? r.text() : '')
     .then(t => {
-      latestVersion = t.trim();
+      // Показываем только номер версии: вместо файла может прийти страница ошибки
+      latestVersion = /^\d+\.\d+\.\d+$/.test(t.trim()) ? t.trim() : '';
       document.getElementById('latestVer').textContent = latestVersion || '—';
     })
     .catch(() => {
       document.getElementById('latestVer').textContent = '—';
     });
+
+  // Мобильные браузеры не умеют работать с USB
+  if (!('serial' in navigator)) {
+    document.querySelectorAll('.btn').forEach(b => { b.disabled = true; });
+    document.getElementById('statusMsg').textContent =
+      'USB flashing needs Chrome or Edge on a computer. On a phone, update over Bluetooth in Settings.';
+  }
 
   // getFirmware(board) вызывается, когда чип уже определён: чужой файл до записи не доходит
   async function doFlash(getFirmware, checkOptions) {
@@ -392,6 +400,6 @@ function fwCheckWithConfirm(bytes, board, options) {
     }
   });
 </script>
-<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-07 14:39</p>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-07 14:41</p>
 </body>
 </html>
