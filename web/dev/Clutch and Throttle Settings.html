@@ -182,6 +182,10 @@
         <button class="mode-btn" data-mode="3">4</button>
         <button class="mode-btn" data-mode="4">5</button>
       </div>
+      <div class="connectionContainer" style="margin-top:8px;">
+        <button id="loadRecommendedBtn" style="background:#888;">Load recommended settings</button>
+      </div>
+      <p id="loadRecommendedStatus" style="margin:4px 0 0; font-size:14px;"></p>
     </div>
 
     <!-- График -->
@@ -1193,6 +1197,65 @@ function fwCheckWithConfirm(bytes, board, options) {
     updateArbBtn();
   });
 
+  // ── Load recommended settings ──
+  // Записывает в текущий пресет проверенные настройки (они же значения по умолчанию в
+  // прошивке 2.15.6+) и сохраняет его. Калибровка датчиков и другие пресеты не меняются.
+  // Значения в единицах прошивки: для float_pct — доля, а не проценты ползунка.
+  const RECOMMENDED = {
+    cl_realism: 1.0,  cl_idleLevel: 31, cl_idle: 2, cl_idleFade: 500, cl_startMv: 500,
+    tr_softness: 0.32, tr_twistLow: 380, tr_twistHigh: 1440, tr_return: 570,
+    tr_spdLow: 300, tr_spdHigh: 1000,
+    fly_punch: 0.47, fly_revUp: 210, fly_revDown: 18, fly_dump: 300,
+    fw_riseLoaded: 281, fw_fallLoaded: 269, fw_riseUnloaded: 500, fw_fallUnloaded: 500,
+    fw_hangDuration: 500, fw_hangThreshold: 300, fw_snapBoost: 1.38, fw_snapThreshold: 400, fw_snapFall: 500,
+    arb_kp: 0.04, arb_ki: 0.23, arb_maxOut: 30, arb_clutchThr: 35, arb_rpmThr: -5,
+    arb_rateRise: 300, arb_rateFall: 200, arb_rpmFilter: 0.35,
+  };
+  const RECOMMENDED_FLY_MODE = 1;   // Virtual Flywheel
+  const RECOMMENDED_TR_MODE  = 1;   // по скорости поворота ручки
+  const RECOMMENDED_ARB      = true;
+
+  document.getElementById('loadRecommendedBtn').addEventListener('click', async () => {
+    const status = document.getElementById('loadRecommendedStatus');
+    if (!charSavePreset || !bleDevice || !bleDevice.gatt.connected) {
+      status.textContent = 'Connect to the device first';
+      return;
+    }
+    if (!confirm(`Replace all settings of preset ${currentMode + 1} with the recommended ones?\n\n` +
+                 'Curves, smoothing, flywheel, throttle response and anti-rollback will be overwritten. ' +
+                 'Sensor calibration and other presets are not changed.')) return;
+    const btn = document.getElementById('loadRecommendedBtn');
+    btn.disabled = true;
+    status.textContent = 'Writing...';
+    try {
+      for (const s of fwSliders) {
+        const ch = charFW[s.id];
+        if (ch && s.id in RECOMMENDED)
+          await q.run(() => ch.writeValue(new Float32Array([RECOMMENDED[s.id]])));
+      }
+      if (charFlyMode) await q.run(() => charFlyMode.writeValue(new Float32Array([RECOMMENDED_FLY_MODE])));
+      if (charTrMode)  await q.run(() => charTrMode.writeValue(new Float32Array([RECOMMENDED_TR_MODE])));
+      if (charArbEnabled) {
+        await q.run(() => charArbEnabled.writeValue(new Uint8Array([RECOMMENDED_ARB ? 1 : 0])));
+        arbEnabled = RECOMMENDED_ARB; updateArbBtn();
+      }
+      if (charCoefs) {
+        const curves = new Float64Array([...defaultClutch, ...defaultGas]);
+        await q.run(() => charCoefs.writeValue(new Uint8Array(curves.buffer)));
+      }
+      await q.run(() => charSavePreset.writeValue(new Uint8Array([currentMode])));
+      await new Promise(r => setTimeout(r, 300));
+      try { await loadFWSliders(); } catch(e) { console.error('recommended reload', e); }
+      try { await fetchChartFromBle(); } catch(e) { console.error('recommended chart', e); }
+      status.textContent = `✓ Recommended settings saved to preset ${currentMode + 1}`;
+    } catch(e) {
+      console.error('load recommended', e);
+      status.textContent = '✗ ' + e.message + '. Some settings may be written, check the preset.';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
   // ── Emergency Mode ──
   function updateEmergencyBtn() {
     const btn = document.getElementById('emergencyButton');
@@ -2016,6 +2079,6 @@ function fwCheckWithConfirm(bytes, board, options) {
   updateSliderBg(document.getElementById('freqMaxSlider'), '#ef4444');
   // ─────────────────────────────────────────────────────────────────────────
 </script>
-<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-07 14:41</p>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-13 15:59</p>
 </body>
 </html>
