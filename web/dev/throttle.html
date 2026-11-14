@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ручка газа BLE</title>
+<style>
+:root {
+  --bg: #f4f5f7; --card: #ffffff; --ink: #16181d; --muted: #6a7080; --line: #e2e5ea;
+  --accent: #1f6feb; --accent-ink: #ffffff; --ok: #1a7f37; --warn: #b35900; --bad: #c62828;
+  --bar: #e9ecf1; --fill: #1f6feb; --fill2: #8250df; --chip: #eef1f5;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1013; --card: #171a1f; --ink: #e8eaee; --muted: #9098a6; --line: #262a31;
+    --accent: #4c8dff; --accent-ink: #0b0d10; --ok: #3fb950; --warn: #e3a03a; --bad: #ff6b6b;
+    --bar: #23272e; --fill: #4c8dff; --fill2: #a37cf0; --chip: #22262d;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1013; --card: #171a1f; --ink: #e8eaee; --muted: #9098a6; --line: #262a31;
+  --accent: #4c8dff; --accent-ink: #0b0d10; --ok: #3fb950; --warn: #e3a03a; --bad: #ff6b6b;
+  --bar: #23272e; --fill: #4c8dff; --fill2: #a37cf0; --chip: #22262d;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 560px; margin: 0 auto; padding: 12px 16px 40px; }
+header { display: flex; align-items: center; gap: 10px; padding: 6px 0 12px; }
+header h1 { font-size: 18px; margin: 0; flex: 1; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot.on { background: var(--ok); }
+.sub { color: var(--muted); font-size: 13px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 12px; }
+.card h2 { font-size: 14px; margin: 0 0 10px; color: var(--muted); font-weight: 600; letter-spacing: .02em; }
+button { font: inherit; border: 1px solid var(--line); background: var(--chip); color: var(--ink);
+  border-radius: 10px; padding: 10px 14px; cursor: pointer; min-height: 44px; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; font-weight: 600; }
+button.danger { color: var(--bad); }
+button:disabled { opacity: .45; cursor: default; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.grow { flex: 1; }
+.big { font-size: 56px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.big small { font-size: 22px; color: var(--muted); font-weight: 500; }
+.bar { position: relative; height: 14px; background: var(--bar); border-radius: 7px; overflow: hidden; }
+.bar > i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--fill); border-radius: 7px; width: 0; }
+.bar.thin { height: 8px; }
+.bar.pr > i { background: var(--fill2); opacity: .55; }
+.lbl { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+.lbl b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; min-height: 26px; }
+.chip { background: var(--chip); border-radius: 13px; padding: 3px 10px; font-size: 13px; }
+.chip.bad { color: var(--bad); } .chip.warn { color: var(--warn); } .chip.ok { color: var(--ok); }
+.raw { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px 14px; }
+.raw div { display: flex; flex-direction: column; }
+.raw b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.ch { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.ch h3 { grid-column: 1 / -1; margin: 0; font-size: 15px; display: flex; justify-content: space-between; }
+.ch h3 span { color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+.ch h3 label.en { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.ch h3 label.en input { width: 18px; height: 18px; margin: 0; }
+.ch.chOff label.f, .ch.chOff .vbar { opacity: .4; }
+label.f { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+input[type=number] { font: inherit; font-size: 18px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--ink); width: 100%; font-variant-numeric: tabular-nums; }
+input.dirty { border-color: var(--warn); }
+input.badv { border-color: var(--bad); }
+.vbar { grid-column: 1 / -1; position: relative; height: 10px; background: var(--bar); border-radius: 5px; }
+.vbar .rng { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--fill) 25%, transparent); }
+.vbar .now { position: absolute; top: -4px; width: 3px; height: 18px; background: var(--fill); border-radius: 2px; transform: translateX(-1px); }
+.steps { list-style: none; margin: 0 0 10px; padding: 0; }
+.steps li { display: flex; gap: 10px; align-items: center; padding: 7px 0; color: var(--muted); }
+.steps li i { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line); flex: none;
+  display: grid; place-items: center; font-style: normal; font-size: 12px; }
+.steps li.cur { color: var(--ink); font-weight: 600; }
+.steps li.cur i { border-color: var(--accent); color: var(--accent); }
+.steps li.done i { border-color: var(--ok); background: var(--ok); color: var(--card); }
+.say { font-size: 17px; font-weight: 600; margin: 4px 0 10px; min-height: 24px; }
+.res { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.res b { color: var(--ink); }
+.msg { font-size: 14px; min-height: 20px; margin-top: 8px; }
+.msg.ok { color: var(--ok); } .msg.bad { color: var(--bad); }
+details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+#log { font: 12px/1.35 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-all;
+  max-height: 220px; overflow: auto; color: var(--muted); margin-top: 8px; }
+.off { opacity: .5; pointer-events: none; }
+#nobt { display: none; color: var(--bad); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <span class="dot" id="dot"></span>
+    <h1>Ручка газа <span class="sub" id="devname"></span></h1>
+    <button class="primary" id="btnConn">Подключить</button>
+  </header>
+  <p id="nobt" class="card">Этот браузер не умеет Web Bluetooth. Нужен Chrome или Edge (Windows, Android, macOS). На iPhone — браузер Bluefy.</p>
+
+  <div id="ui" class="off">
+  <section class="card">
+    <h2>Выход</h2>
+    <div class="row">
+      <div class="big grow"><span id="pct">—</span><small> %</small></div>
+      <div style="text-align:right">
+        <div class="sub">Канал 1</div><div style="font-size:22px;font-weight:700" id="ua">— В</div>
+        <div class="sub" style="margin-top:4px">Канал 2</div><div style="font-size:22px;font-weight:700" id="ub">— В</div>
+      </div>
+    </div>
+    <div class="lbl"><span>Выход</span><b id="pctL"></b></div>
+    <div class="bar"><i id="pctBar"></i></div>
+    <div class="lbl"><span>Положение ручки</span><b id="prL"></b></div>
+    <div class="bar thin pr"><i id="prBar"></i></div>
+    <div class="chips" id="chips"></div>
+  </section>
+
+  <section class="card">
+    <h2>Датчики и угол</h2>
+    <div class="raw">
+      <div><span class="sub">Угол ручки</span><b id="rHandle">—</b></div>
+      <div><span class="sub">Поворот поля</span><b id="rRel">—</b></div>
+      <div><span class="sub">Bt (стоя)</span><b id="rBt">—</b></div>
+      <div><span class="sub">Bz (лёжа)</span><b id="rBz">—</b></div>
+      <div><span class="sub">Датчик Bt</span><b id="rRa">—</b></div>
+      <div><span class="sub">Датчик Bz</span><b id="rRb">—</b></div>
+      <div><span class="sub">|B|</span><b id="rB">—</b></div>
+      <div><span class="sub">Угол поля (абс.)</span><b id="rAng">—</b></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <span class="sub grow">Ручка мин / макс / размах: <b id="rMM">—</b></span>
+      <button id="btnMM">Сброс</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Напряжение выхода</h2>
+    <div id="chs"></div>
+    <div class="row">
+      <button class="primary" id="btnSave">Сохранить в плату</button>
+      <button id="btnRevert">Отменить</button>
+      <span class="sub grow" id="fsInfo"></span>
+    </div>
+    <div class="msg" id="outMsg"></div>
+  </section>
+
+  <section class="card">
+    <h2>Калибровка</h2>
+    <ol class="steps" id="steps">
+      <li data-k="wait_rest"><i>1</i>Ручка в нуле, не трогать</li>
+      <li data-k="rest_ok"><i>2</i>Плавно повернуть до упора</li>
+      <li data-k="moving"><i>3</i>Держать у упора</li>
+      <li data-k="far_ok"><i>4</i>Плавно вернуть в ноль</li>
+    </ol>
+    <div class="say" id="calSay"></div>
+    <div class="row">
+      <button class="primary" id="btnCal">Начать калибровку</button>
+      <button class="danger" id="btnCalAbort" disabled>Прервать</button>
+    </div>
+    <div class="res" id="calRes"></div>
+  </section>
+
+  <section class="card">
+    <details>
+      <summary>Журнал обмена</summary>
+      <div id="log"></div>
+    </details>
+  </section>
+  </div>
+</main>
+<script>
+const SVC = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const RXC = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+const TXC = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+const $ = id => document.getElementById(id);
+const ERR = [
+  ['I2C', 'нет связи с АЦП', 'bad'], ['SENS', 'обрыв датчика', 'bad'], ['SAT', 'насыщение датчика', 'bad'],
+  ['VCC', 'питание датчиков', 'bad'], ['BMAG', 'поле не как при калибровке', 'bad'], ['REL', 'угол вне хода', 'bad'],
+  ['NOTZERO', 'верни ручку в ноль', 'warn'], ['NOCAL', 'нет калибровки', 'bad'], ['CALIB', 'идёт калибровка', 'warn'],
+];
+const SAY = {
+  wait_rest: 'Держи ручку в нуле, не трогай…',
+  rest_ok: 'Ноль записан. Плавно поверни ручку до упора',
+  moving: 'Дойди до упора и подержи секунду',
+  far_ok: 'Упор записан. Плавно верни ручку в ноль',
+};
+const ORDER = ['wait_rest', 'rest_ok', 'moving', 'far_ok'];
+
+let dev = null, rx = null, tx = null, rxBuf = '';
+let waiters = {}, writeChain = Promise.resolve();
+let outCfg = null, fs = 4.096, nCh = 2, lastSample = null, testUntil = 0;
+
+if (!navigator.bluetooth) { $('nobt').style.display = 'block'; $('btnConn').disabled = true; }
+
+function log(dir, s) {
+  const el = $('log');
+  if (s.startsWith('{"t"')) return;   // поток не пишем
+  el.textContent += (dir + ' ' + s + '\n');
+  if (el.textContent.length > 20000) el.textContent = el.textContent.slice(-15000);
+  el.scrollTop = el.scrollHeight;
+}
+
+// ---------- BLE
+async function connect() {
+  try {
+    if (!dev) {
+      dev = await navigator.bluetooth.requestDevice({ filters: [{ namePrefix: 'Throttle' }], optionalServices: [SVC] });
+      dev.addEventListener('gattserverdisconnected', onDisc);
+    }
+    $('btnConn').textContent = 'Подключаю…'; $('btnConn').disabled = true;
+    const srv = await dev.gatt.connect();
+    const svc = await srv.getPrimaryService(SVC);
+    rx = await svc.getCharacteristic(RXC);
+    tx = await svc.getCharacteristic(TXC);
+    tx.addEventListener('characteristicvaluechanged', onNotify);
+    await tx.startNotifications();
+    setConn(true);
+    const info = await cmd({ cmd: 'info' });
+    $('devname').textContent = `${info.ble || dev.name} · fw ${info.fw}`;
+    await loadOut();
+    const st = await cmd({ cmd: 'calstatus' });
+    if (st.active) calPhase(st.phase);
+    await cmd({ cmd: 'stream', on: true, hz: 20 });
+  } catch (e) {
+    log('!', String(e));
+    setConn(false);
+  }
+}
+function disconnect() { if (dev && dev.gatt.connected) dev.gatt.disconnect(); }
+function onDisc() { setConn(false); log('!', 'отключено'); }
+function setConn(on) {
+  $('dot').classList.toggle('on', on);
+  $('ui').classList.toggle('off', !on);
+  $('btnConn').disabled = false;
+  $('btnConn').textContent = on ? 'Отключить' : (dev ? 'Подключить снова' : 'Подключить');
+  $('btnConn').classList.toggle('primary', !on);
+  if (!on) { for (const k in waiters) waiters[k].rej(new Error('нет связи')); waiters = {}; }
+}
+
+function onNotify(ev) {
+  rxBuf += new TextDecoder().decode(ev.target.value);
+  let i;
+  while ((i = rxBuf.indexOf('\n')) >= 0) {
+    const line = rxBuf.slice(0, i).trim(); rxBuf = rxBuf.slice(i + 1);
+    if (!line) continue;
+    log('<', line);
+    let m; try { m = JSON.parse(line); } catch { continue; }
+    if ('t' in m && 'pct' in m) onSample(m);
+    else if (m.evt === 'cal') onCalEvt(m);
+    else if (m.cmd && waiters[m.cmd]) { const w = waiters[m.cmd]; delete waiters[m.cmd]; w.res(m); }
+  }
+}
+
+function write(str) {
+  const data = new TextEncoder().encode(str + '\n');
+  writeChain = writeChain.then(async () => {
+    for (let o = 0; o < data.length; o += 100) await rx.writeValueWithResponse(data.slice(o, o + 100));
+  }).catch(e => log('!', String(e)));
+  return writeChain;
+}
+function cmd(obj, ms = 3000) {
+  return new Promise((res, rej) => {
+    if (!dev || !dev.gatt.connected) return rej(new Error('нет связи'));
+    const t = setTimeout(() => { delete waiters[obj.cmd]; rej(new Error('нет ответа: ' + obj.cmd)); }, ms);
+    waiters[obj.cmd] = { res: m => { clearTimeout(t); res(m); }, rej: e => { clearTimeout(t); rej(e); } };
+    const s = JSON.stringify(obj); log('>', s); write(s);
+  });
+}
+
+// ---------- поток
+const HANDLE_SPAN = 60;   // ° хода ручки (calib.h)
+let mmLo = Infinity, mmHi = -Infinity;
+$('btnMM').onclick = () => { mmLo = Infinity; mmHi = -Infinity; $('rMM').textContent = '—'; };
+function showRaw(m) {
+  const calOn = m.err & (1 << 8), noCal = m.err & (1 << 7);
+  const h = m.pr * HANDLE_SPAN / 100;
+  $('rHandle').textContent = calOn || noCal ? '—' : h.toFixed(1) + '°';
+  $('rRel').textContent = calOn || noCal ? '—' : m.rel.toFixed(1) + '°';
+  $('rAng').textContent = m.ang.toFixed(1) + '°';
+  $('rBt').textContent = m.bt.toFixed(1) + ' мТл';
+  $('rBz').textContent = m.bz.toFixed(1) + ' мТл';
+  $('rRa').textContent = m.ra.toFixed(3) + ' В';
+  $('rRb').textContent = m.rb.toFixed(3) + ' В';
+  $('rB').textContent = m.b.toFixed(1) + ' мТл';
+  if (!calOn && !noCal) {
+    mmLo = Math.min(mmLo, h); mmHi = Math.max(mmHi, h);
+    $('rMM').textContent = `${mmLo.toFixed(1)}° / ${mmHi.toFixed(1)}° / ${(mmHi - mmLo).toFixed(1)}°`;
+  }
+}
+function onSample(m) {
+  lastSample = m;
+  showRaw(m);
+  $('pct').textContent = m.pct.toFixed(0);
+  $('pctL').textContent = m.pct.toFixed(1) + ' %';
+  $('pctBar').style.width = Math.max(0, Math.min(100, m.pct)) + '%';
+  const calOn = m.err & (1 << 8);
+  $('prL').textContent = calOn ? '—' : m.pr.toFixed(1) + ' %';
+  $('prBar').style.width = Math.max(0, Math.min(100, m.pr)) + '%';
+  const en = (outCfg && outCfg.en) || [true, true];
+  $('ua').textContent = en[0] ? m.ua.toFixed(2) + ' В' : 'выкл';
+  $('ub').textContent = nCh < 2 ? '—' : en[1] ? m.ub.toFixed(2) + ' В' : 'выкл';
+  drawNow([m.ua, m.ub]);
+  const chips = [];
+  ERR.forEach(([k, txt, cls], b) => { if (m.err & (1 << b)) chips.push(`<span class="chip ${cls}">${txt}</span>`); });
+  if (m.test) chips.push(`<span class="chip warn">проверка выхода</span>`);
+  if (!chips.length) chips.push('<span class="chip ok">норма</span>');
+  $('chips').innerHTML = chips.join('');
+}
+
+// ---------- настройки выхода
+function chHtml(i) {
+  return `<div class="ch" id="ch${i}"><h3><label class="en"><input type="checkbox" id="en_${i}"> Канал ${i + 1}</label><span id="now${i}"></span></h3>
+    <label class="f">При 0 % (газ закрыт), В<input type="number" step="0.01" min="0" id="v0_${i}"></label>
+    <label class="f">При 100 %, В<input type="number" step="0.01" min="0" id="v1_${i}"></label>
+    <div class="vbar"><div class="rng" id="rng${i}"></div><div class="now" id="mk${i}"></div></div></div>`;
+}
+async function loadOut() {
+  const m = await cmd({ cmd: 'getout' });
+  outCfg = m; fs = m.fs || 4.096; nCh = m.dac_ch || 2;
+  $('chs').innerHTML = [0, 1].map(chHtml).join('');
+  for (let i = 0; i < 2; i++) {
+    $('v0_' + i).value = m.v0[i].toFixed(2); $('v1_' + i).value = m.v1[i].toFixed(2);
+    $('v0_' + i).max = $('v1_' + i).max = fs.toFixed(3);
+    $('en_' + i).checked = !m.en || m.en[i] !== false;
+    for (const k of ['v0_', 'v1_', 'en_']) $(k + i).addEventListener('input', checkInputs);
+  }
+  $('fsInfo').textContent = `ЦАП ${m.dac}, 0…${fs.toFixed(3)} В`;
+  checkInputs();
+}
+function readInputs() {
+  const v0 = [], v1 = [], en = [];
+  for (let i = 0; i < 2; i++) {
+    v0.push(parseFloat($('v0_' + i).value)); v1.push(parseFloat($('v1_' + i).value)); en.push($('en_' + i).checked);
+  }
+  return { v0, v1, en };
+}
+function checkInputs() {
+  if (!outCfg) return false;
+  const { v0, v1, en } = readInputs();
+  let ok = true, dirty = false;
+  for (let i = 0; i < 2; i++) {
+    const enRef = !outCfg.en || outCfg.en[i] !== false;
+    if (en[i] !== enRef) dirty = true;
+    $('ch' + i).classList.toggle('chOff', !en[i]);
+    for (const [k, v, ref] of [['v0_', v0[i], outCfg.v0[i]], ['v1_', v1[i], outCfg.v1[i]]]) {
+      const bad = !(v >= 0 && v <= fs) || Math.abs(v1[i] - v0[i]) < 0.2;
+      const d = Math.abs(v - ref) > 0.0005;
+      $(k + i).classList.toggle('badv', bad); $(k + i).classList.toggle('dirty', d && !bad);
+      ok = ok && !bad; dirty = dirty || d;
+    }
+    const lo = Math.min(v0[i], v1[i]) / fs * 100, hi = Math.max(v0[i], v1[i]) / fs * 100;
+    const r = $('rng' + i); if (r) { r.style.left = lo + '%'; r.style.width = Math.max(0, hi - lo) + '%'; }
+  }
+  $('btnSave').disabled = !ok || !dirty;
+  $('btnRevert').disabled = !dirty;
+  if (!ok) msg('outMsg', `Напряжение 0…${fs.toFixed(2)} В, разница между 0 % и 100 % не меньше 0,2 В`, 'bad');
+  else if (dirty) msg('outMsg', 'Есть несохранённые изменения', '');
+  return ok;
+}
+function drawNow(v) {
+  for (let i = 0; i < 2; i++) {
+    const mk = $('mk' + i); if (!mk) continue;
+    mk.style.left = Math.max(0, Math.min(100, v[i] / fs * 100)) + '%';
+    const on = !outCfg || !outCfg.en || outCfg.en[i] !== false;
+    $('now' + i).textContent = on ? `сейчас ${v[i].toFixed(2)} В` : 'выключен';
+  }
+}
+function msg(id, t, cls) { const e = $(id); e.textContent = t; e.className = 'msg ' + (cls || ''); }
+const ERRTXT = {
+  'throttle open': 'Сейчас выдаётся газ — отпусти ручку', 'handle not at rest': 'Ручка должна быть в нуле',
+  'calibration running': 'Идёт калибровка', 'nvs write failed': 'Не удалось записать в память платы',
+};
+const tr = e => ERRTXT[e] || e;
+
+$('btnSave').onclick = async () => {
+  if (!checkInputs()) return;
+  try {
+    const m = await cmd({ cmd: 'setout', ...readInputs() });
+    if (m.ok) { outCfg = m; checkInputs(); msg('outMsg', 'Сохранено в плату', 'ok'); }
+    else msg('outMsg', 'Не сохранено: ' + tr(m.err), 'bad');
+  } catch (e) { msg('outMsg', String(e.message || e), 'bad'); }
+};
+$('btnRevert').onclick = () => {
+  for (let i = 0; i < 2; i++) {
+    $('v0_' + i).value = outCfg.v0[i].toFixed(2); $('v1_' + i).value = outCfg.v1[i].toFixed(2);
+    $('en_' + i).checked = !outCfg.en || outCfg.en[i] !== false;
+  }
+  checkInputs(); msg('outMsg', '', '');
+};
+
+// ---------- калибровка
+function calPhase(ph) {
+  const k = ORDER.indexOf(ph);
+  document.querySelectorAll('#steps li').forEach((li, i) => {
+    li.classList.toggle('done', k > i || ph === 'done');
+    li.classList.toggle('cur', i === k);
+  });
+  $('calSay').textContent = SAY[ph] || '';
+  const act = k >= 0;
+  $('btnCal').disabled = act; $('btnCalAbort').disabled = !act;
+}
+function onCalEvt(m) {
+  calPhase(m.phase);
+  if (m.phase === 'done' || m.phase === 'fail') {
+    const r = m.res || {};
+    if (m.phase === 'done') {
+      $('calSay').innerHTML = '<span style="color:var(--ok)">Калибровка записана в плату</span>';
+      $('calRes').innerHTML = `Поворот поля <b>${r.span.toFixed(1)}°</b> · центр ${r.n0t.toFixed(1)} / ${r.n0z.toFixed(1)} мТл ·
+        kz ${r.kz.toFixed(3)} · |B| ${r.bmin.toFixed(0)}…${r.bmax.toFixed(0)} мТл · ${r.method === 'ellipse' ? 'эллипс' : 'по размаху'}
+        (невязка ${(r.rms * 100).toFixed(1)} %) · точек ${r.n}`;
+    } else {
+      $('calSay').innerHTML = `<span style="color:var(--bad)">Не получилось: ${r.reason || 'ошибка'}</span>`;
+      $('calRes').textContent = 'Старая калибровка не тронута.';
+    }
+  }
+}
+$('btnCal').onclick = async () => {
+  $('calRes').textContent = '';
+  try {
+    const m = await cmd({ cmd: 'calstart' });
+    if (!m.ok) $('calSay').innerHTML = `<span style="color:var(--bad)">${tr(m.err)}</span>`;
+  } catch (e) { $('calSay').textContent = String(e.message || e); }
+};
+$('btnCalAbort').onclick = () => cmd({ cmd: 'calabort' }).catch(() => {});
+
+$('btnConn').onclick = () => (dev && dev.gatt.connected) ? disconnect() : connect();
+</script>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-14 19:11</p>
+</body>
+</html>
