@@ -141,6 +141,21 @@
   </div>
 </div>
 
+<!-- Пошаговая калибровка -->
+<div class="info-overlay" id="gcalOverlay" style="z-index:150;">
+  <div class="info-box" style="width:100%;">
+    <h4 id="gcalTitle">Calibration</h4>
+    <p id="gcalStep" style="font-size:17px; color:#222; font-weight:bold; min-height:48px;"></p>
+    <progress id="gcalProgress" value="0" max="100" style="width:100%; height:18px;"></progress>
+    <p style="margin:6px 0; font-size:14px; text-align:center;">Sensor: <b id="gcalValue">—</b> mV</p>
+    <p id="gcalResult" style="font-size:14px; min-height:20px;"></p>
+    <div style="display:flex; gap:8px; margin-top:8px;">
+      <button id="gcalRetry" style="flex:1; display:none; padding:10px; background:#2a86d6; color:white; border:none; border-radius:6px; font-size:15px; cursor:pointer;">Try again</button>
+      <button id="gcalCancel" style="flex:1; padding:10px; background:#888; color:white; border:none; border-radius:6px; font-size:15px; cursor:pointer;">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <div class="info-overlay" id="infoOverlay">
   <div class="info-box">
     <h4 id="infoTitle"></h4>
@@ -466,7 +481,10 @@
         Pressed: <span id="fullyPressedValueA0">-</span> &nbsp;|&nbsp;
         Released: <span id="fullyReleasedValueA0">-</span>
       </p>
-      <div class="connectionContainer">
+      <div class="connectionContainer gcal-new" style="display:none;">
+        <button id="gcalClutchBtn" style="background:#24af24;">Calibrate clutch</button>
+      </div>
+      <div class="connectionContainer gcal-old">
         <button id="savePressedButton">Save Clutch Pressed</button>
         <button id="saveReleasedButton">Save Clutch Released</button>
       </div>
@@ -476,10 +494,17 @@
         Open: <span id="fullyPressedValueA1">-</span> &nbsp;|&nbsp;
         Closed: <span id="fullyReleasedValueA1">-</span>
       </p>
-      <div class="connectionContainer">
+      <div class="connectionContainer gcal-new" style="display:none;">
+        <button id="gcalGasBtn" style="background:#24af24;">Calibrate throttle</button>
+      </div>
+      <div class="connectionContainer gcal-old">
         <button id="savePressedButtonA1">Save Throttle Open</button>
         <button id="saveReleasedButtonA1">Save Throttle Closed</button>
       </div>
+      <p class="gcal-new" style="display:none; font-size:13px; color:#888; margin:4px 0 0;">
+        Guided: hands off 2 s → slowly to the full stop → hold 2 s → let go, hands off 2 s.
+        The output stays at idle while calibrating. If a check fails, the previous calibration is kept.
+      </p>
     </div>
 
   </div><!-- /basicSection -->
@@ -1197,6 +1222,109 @@ function fwCheckWithConfirm(bytes, board, options) {
     updateArbBtn();
   });
 
+  // ── Пошаговая калибровка (прошивка 2.16.0+, характеристика 19b10080) ──
+  // Прошивка ведёт шаги сама и шлёт статус "GC,<C|G>,<фаза>,<прогресс>,<мВ>,<подробности>".
+  const UUID_GUIDED_CAL = '19b10080-e8f2-537e-4f6c-d104768a1214';
+  let charGuidedCal = null, gcalTarget = null;
+  const GCAL_TEXT = {
+    C: { title: 'Clutch calibration',
+         rest: 'Release the lever completely. Hands off.',
+         move: 'Now slowly squeeze the lever all the way to the stop.',
+         holdFar: 'Squeeze all the way to the stop…',
+         hold: 'Hold it at the stop.',
+         ret: 'Let go of the lever. Hands off.' },
+    G: { title: 'Throttle calibration',
+         rest: 'Close the throttle completely. Hands off.',
+         move: 'Now slowly twist the throttle fully open, to the stop.',
+         holdFar: 'Twist all the way to the stop…',
+         hold: 'Hold it fully open.',
+         ret: 'Let go of the throttle. Hands off.' },
+  };
+  const GCAL_FAIL = {
+    ABORTED: 'Cancelled.',
+    SENSOR: 'Sensor error.',
+    DISCONNECTED: 'Connection lost.',
+    TIMEOUT_REST: 'The signal did not settle. Make sure nothing touches the {x}.',
+    TIMEOUT_MOVE: 'No movement detected.',
+    TIMEOUT_HOLD: 'The full stop was not held still for 2 seconds.',
+    TIMEOUT_RETURN: 'The {x} did not come back to the released position.',
+    START_NOT_RELEASED: 'At the start the {x} was slightly pressed. Repeat with hands off at the start.',
+    NOT_RETURNED: 'After letting go the {x} did not return to where it started: it sticks or was still touched.',
+    NOT_HELD_AT_STOP: 'It went further than where you held it. Hold exactly at the full stop.',
+    BEYOND_RELEASED: 'The signal went past the released position. Repeat with hands off at the start.',
+    SMALL_TRAVEL: 'The travel is too small. Check the sensor and magnet.',
+  };
+
+  function gcalShow(target) {
+    gcalTarget = target;
+    const t = GCAL_TEXT[target];
+    document.getElementById('gcalTitle').textContent = t.title;
+    document.getElementById('gcalStep').textContent = 'Starting…';
+    document.getElementById('gcalProgress').value = 0;
+    document.getElementById('gcalValue').textContent = '—';
+    document.getElementById('gcalResult').textContent = '';
+    document.getElementById('gcalRetry').style.display = 'none';
+    document.getElementById('gcalCancel').textContent = 'Cancel';
+    document.getElementById('gcalOverlay').classList.add('active');
+  }
+  function gcalHide() {
+    gcalTarget = null;
+    document.getElementById('gcalOverlay').classList.remove('active');
+  }
+
+  async function gcalStart(target) {
+    if (!charGuidedCal) return;
+    gcalShow(target);
+    try { await q.run(() => charGuidedCal.writeValue(new TextEncoder().encode(target))); }
+    catch(e) { document.getElementById('gcalStep').textContent = '✗ ' + e.message; }
+  }
+
+  function onGuidedCalStatus(e) {
+    const p = new TextDecoder().decode(e.target.value).split(',');
+    if (p[0] !== 'GC' || !gcalTarget || p[1] !== gcalTarget) return;
+    const [, , phase, prog, mv, ...rest] = p;
+    const info = rest.join(',');
+    const t = GCAL_TEXT[gcalTarget];
+    const step = document.getElementById('gcalStep');
+    const bar = document.getElementById('gcalProgress');
+    document.getElementById('gcalValue').textContent = mv;
+    bar.value = parseInt(prog) || 0;
+    if (phase === 'rest')   step.textContent = t.rest;
+    if (phase === 'move')   step.textContent = t.move;
+    if (phase === 'hold')   step.textContent = bar.value > 0 ? t.hold : t.holdFar;
+    if (phase === 'return') step.textContent = t.ret;
+    if (phase === 'done') {
+      const v = Object.fromEntries(info.split(';').map(kv => kv.split('=')));
+      const [relName, prName] = gcalTarget === 'C' ? ['Released', 'Pressed'] : ['Closed', 'Open'];
+      step.textContent = '✓ Calibration saved';
+      bar.value = 100;
+      document.getElementById('gcalResult').innerHTML =
+        `${relName}: ${v.oldRel} → <b>${v.rel}</b> mV<br>${prName}: ${v.oldPr} → <b>${v.pr}</b> mV`;
+      document.getElementById('gcalCancel').textContent = 'Close';
+      document.getElementById('gcalRetry').style.display = '';
+    }
+    if (phase === 'fail') {
+      step.textContent = '✗ ' + (GCAL_FAIL[info] || info).replace('{x}', gcalTarget === 'C' ? 'lever' : 'throttle');
+      document.getElementById('gcalResult').textContent = 'The previous calibration is kept.';
+      document.getElementById('gcalCancel').textContent = 'Close';
+      document.getElementById('gcalRetry').style.display = '';
+    }
+  }
+
+  document.getElementById('gcalClutchBtn').addEventListener('click', () => gcalStart('C'));
+  document.getElementById('gcalGasBtn').addEventListener('click', () => gcalStart('G'));
+  document.getElementById('gcalRetry').addEventListener('click', () => { if (gcalTarget) gcalStart(gcalTarget); });
+  document.getElementById('gcalCancel').addEventListener('click', () => {
+    const running = document.getElementById('gcalCancel').textContent === 'Cancel';
+    if (running && charGuidedCal) q.run(() => charGuidedCal.writeValue(new TextEncoder().encode('A'))).catch(() => {});
+    gcalHide();
+  });
+
+  function setGuidedCalSupported(on) {
+    // Старые кнопки остаются: ими можно поправить одну точку вручную
+    document.querySelectorAll('.gcal-new').forEach(el => el.style.display = on ? '' : 'none');
+  }
+
   // ── Load recommended settings ──
   // Записывает в текущий пресет проверенные настройки (они же значения по умолчанию в
   // прошивке 2.15.6+) и сохраняет его. Калибровка датчиков и другие пресеты не меняются.
@@ -1844,6 +1972,14 @@ function fwCheckWithConfirm(bytes, board, options) {
     charFlyMode = null; flyModeVirtual = false; updateFlyModeUI();
     charTrMode = null; trMode = 0; updateTrUI();
     charBulk = null; charMap = new Map();
+    charGuidedCal = null; setGuidedCalSupported(false);
+    if (gcalTarget) {
+      // Плата сама отменяет калибровку при обрыве связи
+      document.getElementById('gcalStep').textContent = '✗ ' + GCAL_FAIL.DISCONNECTED;
+      document.getElementById('gcalResult').textContent = 'The previous calibration is kept.';
+      document.getElementById('gcalCancel').textContent = 'Close';
+      document.getElementById('gcalRetry').style.display = 'none';
+    }
     document.getElementById('fwVersionSpan').textContent = '—';
     document.getElementById('hwBoardSpan').textContent = '—';
     document.getElementById('deviceCard').style.display = 'none';
@@ -1894,6 +2030,10 @@ function fwCheckWithConfirm(bytes, board, options) {
       charOtaCtrl    = await tryGetChar(UUID_OTA_CTRL);
       charOtaData    = await tryGetChar(UUID_OTA_DATA);
       charEnwLocked  = await tryGetChar(UUID_ENW_LOCKED);
+      charGuidedCal  = await tryGetChar(UUID_GUIDED_CAL);
+      try { await subscribe(charGuidedCal, onGuidedCalStatus); }
+      catch(e) { console.error('guided cal notify', e); charGuidedCal = null; }
+      setGuidedCalSupported(!!charGuidedCal);
 
       // UI
       document.getElementById('bleState').textContent = 'Connected';
@@ -2079,6 +2219,6 @@ function fwCheckWithConfirm(bytes, board, options) {
   updateSliderBg(document.getElementById('freqMaxSlider'), '#ef4444');
   // ─────────────────────────────────────────────────────────────────────────
 </script>
-<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-13 15:59</p>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-14 16:21</p>
 </body>
 </html>
