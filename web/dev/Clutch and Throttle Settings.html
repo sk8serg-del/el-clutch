@@ -328,8 +328,8 @@
         <button id="flyModeBtn" class="button-full" style="background:#888;">Mode: Classic (Rev Hang + Clutch Snap)</button>
       </div>
       <div class="card" id="virtualFlyCard">
-        <h3>Virtual Flywheel <button class="info-btn" onclick="showInfo('Virtual Flywheel','<p>Stores energy like an ICE flywheel. With the clutch pulled, throttle spins it up; releasing the clutch sends the stored energy to the wheel as a burst on top of the throttle. With the clutch engaged it does not recharge — no effect in normal riding.</p><p><b>Punch:</b> burst strength = flywheel revs × punch. 0 = off. Range 0–2.</p><p><b>Rev-up speed:</b> how fast throttle spins the flywheel with the clutch pulled, %/sec. Range 50–2000.</p><p><b>Rev drop:</b> how fast revs fall with the throttle closed, %/sec. Lower = heavier flywheel, holds revs longer. Range 5–500.</p><p><b>Release time:</b> how long the stored energy takes to go into the wheel with the clutch fully engaged, ms. Slipping the clutch makes it longer and softer. Range 50–1500.</p><p><b>Flywheel revs</b> — live value, shows how much you have wound up.</p>')">i</button></h3>
-        <label>Flywheel revs (live)</label>
+        <h3>Virtual Flywheel <button class="info-btn" onclick="showInfo('Virtual Flywheel','<p>Stores energy like an ICE flywheel. With the clutch pulled, throttle spins it up; releasing the clutch sends the stored energy to the wheel as a burst on top of the throttle. With the clutch engaged it does not recharge — no effect in normal riding.</p><p><b>Punch:</b> burst strength = flywheel revs × punch. 0 = off. Range 0–2.</p><p><b>Rev-up speed:</b> how fast throttle spins the flywheel with the clutch pulled, %/sec. Range 50–2000.</p><p><b>Rev drop:</b> how fast revs fall with the throttle closed, %/sec. Lower = heavier flywheel, holds revs longer. Range 5–500.</p><p><b>Release time:</b> how long the stored energy takes to go into the wheel with the clutch fully engaged, ms. Slipping the clutch makes it longer and softer. Range 50–1500.</p><p><b>Engine revs</b> — live: with the lever pulled it shows the flywheel (spin-up and slow drop), with the lever released — the engine throttle. The engine sound follows it.</p>')">i</button></h3>
+        <label>Engine revs (live)</label>
         <div class="slider-row">
           <progress id="flyLevelBar" max="100" value="0" style="flex:1;height:14px;"></progress>
           <span class="slider-value" id="flyLevelVal">—</span>
@@ -1446,10 +1446,19 @@ function fwCheckWithConfirm(bytes, board, options) {
     document.getElementById('fullyPressedValueA1').textContent  = prsA1;
     document.getElementById('fullyReleasedValueA1').textContent = relA1;
 
-    // outputFinal (7-й элемент) → Engine Sound
+    // Обороты мотора для шкалы и звука: при выжатом рычаге — маховик (раскрутка и медленный
+    // спад), при отпущенном — мотор (выход газа), между ними — смесь по положению рычага.
+    // В режиме Classic или при Punch 0 маховика нет — только выход газа.
     const outputFinal = parts.length > 6 ? parseFloat(parts[6]) : null;
+    const flyRaw = parts.length > 7 ? parseFloat(parts[7]) : null;
+    let revs = null;
     if (outputFinal !== null) {
-      updateEngineSound(outputFinal, 0, 100);
+      const prs0 = parseFloat(parts[1]), rel0 = parseFloat(parts[2]);
+      const lever = prs0 !== rel0 ? Math.max(0, Math.min(1, (curA0 - rel0) / (prs0 - rel0))) : 0;
+      const flyOn = flyModeVirtual && flyRaw !== null && parseFloat(document.getElementById('fly_punch').value) > 0;
+      revs = flyOn ? lever * flyRaw + (1 - lever) * outputFinal : outputFinal;
+      revs = Math.max(0, Math.min(100, revs));
+      updateEngineSound(revs, 0, 100);
     } else {
       updateEngineSound(curA1, relA1, prsA1);
     }
@@ -1464,11 +1473,10 @@ function fwCheckWithConfirm(bytes, board, options) {
       document.getElementById('trAggrVal').textContent = aggr.toFixed(0);
     }
 
-    // Обороты виртуального маховика (8-й элемент, прошивка 2.10.0+)
-    if (parts.length > 7) {
-      const fly = parseFloat(parts[7]);
-      document.getElementById('flyLevelBar').value = fly;
-      document.getElementById('flyLevelVal').textContent = fly.toFixed(0);
+    // Шкала оборотов: то же, что звук (см. выше)
+    if (revs !== null) {
+      document.getElementById('flyLevelBar').value = revs;
+      document.getElementById('flyLevelVal').textContent = revs.toFixed(0);
     }
 
     // Вертикальные линии
@@ -2213,6 +2221,6 @@ function fwCheckWithConfirm(bytes, board, options) {
   updateSliderBg(document.getElementById('freqMaxSlider'), '#ef4444');
   // ─────────────────────────────────────────────────────────────────────────
 </script>
-<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-16 14:43</p>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-16 15:22</p>
 </body>
 </html>
