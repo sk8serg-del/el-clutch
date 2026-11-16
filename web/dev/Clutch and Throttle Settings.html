@@ -553,7 +553,7 @@
 
   <div class="card" id="livePlotCard">
     <h3>Live Plot</h3>
-    <p style="font-size:13px; color:#888; margin:0 0 6px;">Lever, throttle and what goes to the motor, 20 times a second. Pause to look at a clutch dump.</p>
+    <p style="font-size:13px; color:#888; margin:0 0 6px;">Lever, throttle, engine revs (before the clutch) and the real output to the motor controller, 20 times a second. Pause to look at a clutch dump.</p>
     <div style="position:relative; height:260px;"><canvas id="livePlotCv"></canvas></div>
     <div style="display:flex; gap:6px; margin-top:8px; align-items:center; flex-wrap:wrap;">
       <button id="livePlotPause" class="button-full" style="flex:1; min-width:90px; background:#2a86d6;">Pause</button>
@@ -1431,7 +1431,8 @@ function fwCheckWithConfirm(bytes, board, options) {
       const lever = prs0 !== rel0 ? (curA0 - rel0) / (prs0 - rel0) * 100 : 0;
       const gas = prsA1 !== relA1 ? (curA1 - relA1) / (prsA1 - relA1) * 100 : 0;
       if (window.pvFeed) window.pvFeed(lever, gas, parts.length > 8 ? parseFloat(parts[8]) : null);
-      if (window.livePlotFeed) window.livePlotFeed(lever, gas, parseFloat(parts[6]), parts.length > 7 ? parseFloat(parts[7]) : 0);
+      if (window.livePlotFeed) window.livePlotFeed(lever, gas, parseFloat(parts[6]), parts.length > 7 ? parseFloat(parts[7]) : 0,
+                                                 parts.length > 12 ? parseFloat(parts[12]) : NaN);
     }
 
     // Отклик газа (9–11-й элементы, прошивка 2.11.0+): скорость ручки, обороты колеса, кривая
@@ -2504,7 +2505,8 @@ requestAnimationFrame(tick);
       ds('Snap boost, %', 'rgba(75,192,192,0.35)', { fill: 'origin', borderColor: 'rgb(75,192,192)', borderWidth: 1 }),
       ds('Lever, %', 'rgb(54,162,235)'),
       ds('Throttle, %', 'rgb(255,99,132)'),
-      ds('To motor, %', 'rgb(255,159,64)', { borderWidth: 3 }),
+      ds('Engine revs, %', 'rgb(255,159,64)', { borderDash: [5, 4] }),
+      ds('To motor, %', 'rgb(40,40,40)', { borderWidth: 3 }),
     ] },
     options: {
       animation: false, responsive: true, maintainAspectRatio: false, parsing: false, normalized: true,
@@ -2541,19 +2543,27 @@ requestAnimationFrame(tick);
     chart.update('none');
   }
   const clamp = v => Math.max(0, Math.min(100, isFinite(v) ? v : 0));
-  window.livePlotFeed = function (lever, gas, out, snap) {
+  // реальный выход: мВ на контроллер → % шкалы газа (500 + Idle level … 2000 мВ), как outPctToV3 в прошивке
+  function mvToPct(mv) {
+    if (!isFinite(mv)) return NaN;
+    const lvl = Math.max(0, Math.min(150, parseFloat(document.getElementById('cl_idleLevel').value) || 0));
+    const start = 500 + lvl;
+    return mv <= start ? 0 : (mv - start) / (2000 - start) * 100;
+  }
+  window.livePlotFeed = function (lever, gas, out, snap, mv) {
     if (paused) return;                              // на паузе картинка стоит, данные не копим
     const now = performance.now() / 1000;
     if (t0 === null) t0 = now;
     const x = +(now - t0).toFixed(3);
     const sup = snapSupported();
     note.textContent = sup ? '' : 'Snap boost line needs firmware 2.16.10 or newer.';
-    const vals = [sup ? clamp(snap) : 0, clamp(lever), clamp(gas), clamp(out)];
+    const real = mvToPct(mv);
+    const vals = [sup ? clamp(snap) : 0, clamp(lever), clamp(gas), clamp(out), isFinite(real) ? clamp(real) : null];
     chart.data.datasets.forEach((d, i) => { d.data.push({ x, y: vals[i] }); if (d.data.length > MAXPTS) d.data.shift(); });
     if (!pending && !paused) { pending = true; setTimeout(draw, 100); }
   };
 })();
 </script>
-<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-16 21:17</p>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-16 22:07</p>
 </body>
 </html>
