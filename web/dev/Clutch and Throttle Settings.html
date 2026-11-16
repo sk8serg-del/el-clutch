@@ -107,6 +107,30 @@
       border-radius: 6px; cursor: pointer; font-size: 14px;
     }
   .fw-unsupported { display: none !important; }
+  /* ── предпросмотр настроек ── */
+  .pv-hidden { display: none !important; }
+  .preview { position: relative; height: 220px; margin: 4px 0 2px; }
+  .preview.tall { height: 260px; }
+  .preview-cap { font-size: 13px; color: #888; text-align: center; margin: 2px 0 8px; }
+  .grp { font-size: 15px; font-weight: bold; color: #333; margin: 16px 0 0; padding-top: 10px; border-top: 1px solid #eee; }
+  .lbl-note { font-weight: normal; color: #888; }
+  .live { font-size: 13px; color: #555; margin-top: 2px; }
+  .live b { color: #222; }
+  .meter { flex: 1; position: relative; height: 14px; background: #e6e6e6; border-radius: 3px; margin: 24px 0 26px; }
+  .meter-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: #2a86d6; border-radius: 3px; }
+  .meter-fill.over { background: rgb(75, 192, 192); }
+  .meter-peak { position: absolute; top: -2px; bottom: -2px; width: 2px; background: #555; left: 0; display: none; }
+  .meter-thr { position: absolute; top: 50%; width: 0; cursor: pointer; touch-action: none; }
+  .meter-thr::after { content: ''; position: absolute; left: -10px; top: -10px; width: 20px; height: 20px;
+    box-sizing: border-box; background: #fff; border: 2px solid #e53935; border-radius: 50%; }
+  .meter-thr.main::after { border-color: rgb(255, 159, 64); }
+  .meter-thr span { position: absolute; top: -26px; left: -14px; font-size: 10px; color: #e53935; font-weight: bold; white-space: nowrap; }
+  .meter-thr.main span { left: auto; right: -14px; color: rgb(255, 159, 64); }
+  /* название — над меткой, число — под ней */
+  .meter-thr .nv { position: absolute; top: 13px; left: 0; transform: translateX(-50%); font-size: 11px; color: #333; white-space: nowrap; }
+  .try { background: #f6f8fb; border-radius: 8px; padding: 6px 10px 8px; margin-top: 12px; }
+  .btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .btn-row button { flex: 1; margin: 4px 0; padding: 8px 6px; font-size: 14px; background: #888; width: auto; }
   .idle-zones { display: flex; margin: -6px 46px 8px 0; font-size: 11px; text-align: center; color: #333; }
   .idle-zones span { padding: 1px 0; }
   .slider-row.is-disabled, .slider-row.is-disabled + * { opacity: 0.4; }
@@ -223,6 +247,10 @@
     <div id="flywheelSection" class="section">
       <div class="card">
         <h3>Clutch Model <button class="info-btn" onclick="showInfo('Clutch Model','<p>C = how much power the clutch can pass at the current lever position (0 = pulled, 100 = released).</p><p><b>Clutch realism:</b> 0 = lever scales throttle (gas × C, old behaviour). 1 = real clutch: output = min(gas, C) — slips while gas is above C, bites earlier with less gas. In between = blend. Range 0–1.</p><p><b>Idle power:</b> virtual engine idle — pull when releasing the lever with throttle closed. % of the full controller range 500–2000 mV (4 % = 560 mV), so Idle level does not change it. Below the Idle level voltage it gives no pull. 0 = off. Range 0–20 %.</p><p><b>Idle fade:</b> with the lever fully released, idle fades out over this time so the bike does not creep by itself. Touch the lever to re-arm. Range 100–3000 ms.</p>')">i</button></h3>
+        <div class="preview"><canvas id="pvClutchCv"></canvas></div>
+        <div class="preview-cap">Lever position → what reaches the wheel, at throttle 30 % and 80 %</div>
+        <div class="preview"><canvas id="pvIdleCv"></canvas></div>
+        <div class="preview-cap">Throttle closed: pull the lever, release it slowly, hands off — voltage to the controller</div>
         <label>Clutch realism (0 = gas×C, 1 = min)</label>
         <div class="slider-row">
           <input type="range" id="cl_realism" min="0" max="100" value="0">
@@ -249,15 +277,20 @@
           <span class="slider-value" id="cl_idleFade_val">1000</span>
         </div>
       </div>
+
       <div class="card">
         <h3>Throttle Response <button class="info-btn" onclick="showInfo('Throttle Response','<p>The <b>main</b> throttle curve is the Gas line on the chart. The <b>soft</b> curve is made from it automatically: <b>Softness</b> cuts throttle at the start of travel and fades to full at 100% (Softness 50: 10% grip → 5.5%, 30% → 19.5%, 60% → 48%, 100% → 100%). Edit the main curve and the soft one follows. This chooses which one works.</p><p><b>Off:</b> main curve only, as before.</p><p><b>Twist speed:</b> slow twist = soft, sharp twist = main. After a sharp twist the main curve stays latched while the throttle is held or opened further; when you start closing, it returns to soft over Return time.</p><p><b>Wheel speed:</b> below Slow rpm = soft, above Fast rpm = main, blended in between. Needs the display link; without it = main.</p><p><b>Twist + wheel speed:</b> soft only when slow AND twisting gently — a sharp twist or speed gives the main curve.</p><p>The live bar shows which curve works now: 0 = soft, 100 = main. Use the live twist speed and wheel rpm to set thresholds.</p>')">i</button></h3>
         <label>Mode</label>
         <select id="trModeSel" style="width:97%;padding:8px;font-size:15px;margin-bottom:8px;">
-          <option value="0">Off — main curve only</option>
           <option value="1">Twist speed</option>
-          <option value="2">Wheel speed</option>
-          <option value="3">Twist + wheel speed</option>
+          <option value="0">Off — main curve only</option>
         </select>
+        <label>Throttle twist speed (live) <span class="lbl-note">— drag the soft and main marks</span></label>
+        <div class="slider-row"><div class="meter with-drag" id="twMeter"><div class="meter-fill" id="twFill"></div><div class="meter-peak" id="twPeak"></div>
+          <div class="meter-thr drag" id="twLow"><span>soft</span><b class="nv" id="twLowV"></b></div>
+          <div class="meter-thr drag main" id="twHigh"><span>main</span><b class="nv" id="twHighV"></b></div></div>
+          <span class="slider-value" id="twVal">0</span></div>
+        <div class="live"><span>Last twist: <b id="twLast">—</b></span></div>
         <div id="trSoftGroup">
           <label>Softness (%) — throttle cut at the start of travel</label>
           <div class="slider-row">
@@ -265,90 +298,72 @@
             <span class="slider-value" id="tr_softness_val">50</span>
           </div>
         </div>
-        <label>Live: twist <span id="trLiveRate">—</span> %/s · wheel <span id="trLiveRpm">—</span> rpm</label>
+        <label>Return to soft after closing (ms)</label>
         <div class="slider-row">
-          <progress id="trAggrBar" max="100" value="100" style="flex:1;height:14px;"></progress>
-          <span class="slider-value" id="trAggrVal">—</span>
+          <input type="range" id="tr_return" min="50" max="2000" step="10" value="500">
+          <span class="slider-value" id="tr_return_val">500</span>
         </div>
-        <div id="trTwistGroup">
-          <label>Soft below twist speed (%/s)</label>
-          <div class="slider-row">
-            <input type="range" id="tr_twistLow" min="20" max="1500" step="10" value="200">
-            <span class="slider-value" id="tr_twistLow_val">200</span>
+        <!-- старые элементы: значения порогов и живые поля, на странице не видны -->
+        <div class="pv-hidden">
+          <span id="trLiveRate"></span><span id="trLiveRpm"></span>
+          <progress id="trAggrBar" max="100" value="100"></progress><span id="trAggrVal"></span>
+          <div id="trTwistGroup">
+            <input type="range" id="tr_twistLow" min="20" max="1500" step="10" value="200"><span id="tr_twistLow_val"></span>
+            <input type="range" id="tr_twistHigh" min="50" max="3000" step="10" value="600"><span id="tr_twistHigh_val"></span>
           </div>
-          <label>Main above twist speed (%/s)</label>
-          <div class="slider-row">
-            <input type="range" id="tr_twistHigh" min="50" max="3000" step="10" value="600">
-            <span class="slider-value" id="tr_twistHigh_val">600</span>
-          </div>
-          <label>Return to soft after closing (ms)</label>
-          <div class="slider-row">
-            <input type="range" id="tr_return" min="50" max="2000" step="10" value="500">
-            <span class="slider-value" id="tr_return_val">500</span>
-          </div>
-        </div>
-        <div id="trSpeedGroup">
-          <label>Soft below wheel rpm</label>
-          <div class="slider-row">
-            <input type="range" id="tr_spdLow" min="0" max="3000" step="10" value="300">
-            <span class="slider-value" id="tr_spdLow_val">300</span>
-          </div>
-          <label>Main above wheel rpm</label>
-          <div class="slider-row">
-            <input type="range" id="tr_spdHigh" min="10" max="5000" step="10" value="1000">
-            <span class="slider-value" id="tr_spdHigh_val">1000</span>
+          <div id="trSpeedGroup">
+            <input type="range" id="tr_spdLow" min="0" max="3000" step="10" value="300"><span id="tr_spdLow_val"></span>
+            <input type="range" id="tr_spdHigh" min="10" max="5000" step="10" value="1000"><span id="tr_spdHigh_val"></span>
           </div>
         </div>
       </div>
-      <div class="card">
-        <h3>Throttle Smoothing <button class="info-btn" onclick="showInfo('Throttle Smoothing','<p>Limits how fast the throttle signal can rise and fall. Works in both Classic and Virtual Flywheel modes. Values are in %/sec — how fast the signal can change per second.</p><p><b>Acceleration Under Load (clutch released):</b> rise speed when wheel is connected. 1 = heavy, 500 = instant. Range: 1–500.</p><p><b>Deceleration Under Load:</b> fall speed when closing throttle under load. Range: 1–500.</p><p><b>Acceleration Under No Load (clutch pressed):</b> how fast power rises freely. Range: 1–500.</p><p><b>Deceleration Under No Load:</b> how fast power drops with clutch pressed. Range: 1–500.</p>')">i</button></h3>
-        <label>Acceleration Under Load (clutch released)</label>
+
+      <div class="card" id="virtualFlyCard">
+        <h3>Engine <button class="info-btn" onclick="showInfo('Engine','<p><b>Rev-up, under load:</b> how fast power follows the throttle with the clutch engaged, %/sec.</p><p><b>Rev-up, clutch pulled:</b> how fast the engine revs freely with the lever pulled, %/sec.</p><p><b>Rev drop:</b> how fast revs fall with the throttle closed — with or without the clutch, %/sec.</p><p><b>Clutch Snap:</b> letting the lever go faster than the boost mark gives a short boost on top of the revs: <b>Snap boost</b> = how much, <b>Snap duration</b> = how long it fades. Needs the engine revved.</p><p>On the chart: A — lever starts to go, B — the wheel gets the engine revs, C–D — the snap, E — back to the revs. The dot follows your lever.</p>')">i</button></h3>
+        <div class="preview tall"><canvas id="pvEngCv"></canvas></div>
+        <label>Engine revs (live)</label>
+        <div class="slider-row"><progress id="pvRevsBar" max="100" value="0" style="flex:1;height:14px;"></progress><span class="slider-value" id="pvRevsVal">0</span></div>
+        <label>Clutch release speed (live) <span class="lbl-note">— drag the boost mark</span></label>
+        <div class="slider-row"><div class="meter with-drag" id="relMeter"><div class="meter-fill" id="relFill"></div><div class="meter-peak" id="relPeak"></div>
+          <div class="meter-thr drag" id="relThr"><span>boost</span><b class="nv" id="relThrV"></b></div></div>
+          <span class="slider-value" id="relVal">0</span></div>
+        <div class="live"><span>Last release: <b id="relLast">—</b></span></div>
+        <div class="grp">Revs</div>
+        <label>Rev-up, under load (%/s)</label>
         <div class="slider-row">
           <input type="range" id="fw_riseLoaded" min="1" max="500" value="250">
           <span class="slider-value" id="fw_riseLoaded_val">250</span>
         </div>
-        <label>Deceleration Under Load (clutch released)</label>
+        <label>Rev-up, clutch pulled (%/s)</label>
+        <div class="slider-row">
+          <input type="range" id="fw_riseUnloaded" min="1" max="2000" step="10" value="500">
+          <span class="slider-value" id="fw_riseUnloaded_val">500</span>
+        </div>
+        <label>Rev drop, throttle closed (%/s)</label>
         <div class="slider-row">
           <input type="range" id="fw_fallLoaded" min="1" max="500" value="250">
           <span class="slider-value" id="fw_fallLoaded_val">250</span>
         </div>
-        <label>Acceleration Under No Load (clutch pressed)</label>
+        <div class="grp">Clutch Snap — fast release</div>
+        <label>Snap boost (%)</label>
         <div class="slider-row">
-          <input type="range" id="fw_riseUnloaded" min="1" max="500" value="500">
-          <span class="slider-value" id="fw_riseUnloaded_val">500</span>
+          <input type="range" id="fw_snapBoost" min="100" max="200" value="138">
+          <span class="slider-value" id="fw_snapBoost_val">+38 %</span>
         </div>
-        <label>Deceleration Under No Load (clutch pressed)</label>
+        <label>Snap duration (ms)</label>
         <div class="slider-row">
-          <input type="range" id="fw_fallUnloaded" min="1" max="500" value="500">
-          <span class="slider-value" id="fw_fallUnloaded_val">500</span>
+          <input type="range" id="fw_snapFall" min="10" max="2000" step="10" value="500">
+          <span class="slider-value" id="fw_snapFall_val">500</span>
         </div>
-      </div>
-      <div class="card" id="virtualFlyCard">
-        <h3>Virtual Flywheel <button class="info-btn" onclick="showInfo('Virtual Flywheel','<p>Stores energy like an ICE flywheel. With the clutch pulled, throttle spins it up; releasing the clutch sends the stored energy to the wheel as a burst on top of the throttle. With the clutch engaged it does not recharge — no effect in normal riding.</p><p><b>Punch:</b> burst strength = flywheel revs × punch. 0 = off. Range 0–2.</p><p><b>Rev-up speed:</b> how fast throttle spins the flywheel with the clutch pulled, %/sec. Range 50–2000.</p><p><b>Rev drop:</b> how fast revs fall with the throttle closed, %/sec. Lower = heavier flywheel, holds revs longer. Range 5–500.</p><p><b>Release time:</b> how long the stored energy takes to go into the wheel with the clutch fully engaged, ms. Slipping the clutch makes it longer and softer. Range 50–1500.</p><p><b>Engine revs</b> — live: with the lever pulled it shows the flywheel (spin-up and slow drop), with the lever released — the engine throttle. The engine sound follows it.</p>')">i</button></h3>
-        <label>Engine revs (live)</label>
-        <div class="slider-row">
-          <progress id="flyLevelBar" max="100" value="0" style="flex:1;height:14px;"></progress>
-          <span class="slider-value" id="flyLevelVal">—</span>
-        </div>
-        <label>Punch (0 = off)</label>
-        <div class="slider-row">
-          <input type="range" id="fly_punch" min="0" max="200" value="0">
-          <span class="slider-value" id="fly_punch_val">0.00</span>
-        </div>
-        <label>Rev-up speed, clutch pulled (%/s)</label>
-        <div class="slider-row">
-          <input type="range" id="fly_revUp" min="50" max="2000" step="10" value="400">
-          <span class="slider-value" id="fly_revUp_val">400</span>
-        </div>
-        <label>Rev drop, throttle closed (%/s)</label>
-        <div class="slider-row">
-          <input type="range" id="fly_revDown" min="5" max="500" value="60">
-          <span class="slider-value" id="fly_revDown_val">60</span>
-        </div>
-        <label>Release time (ms)</label>
-        <div class="slider-row">
-          <input type="range" id="fly_dump" min="50" max="1500" step="10" value="300">
-          <span class="slider-value" id="fly_dump_val">300</span>
+        <!-- старые элементы, на странице не видны -->
+        <div class="pv-hidden">
+          <progress id="flyLevelBar" max="100" value="0"></progress><span id="flyLevelVal"></span>
+          <input type="range" id="fw_fallUnloaded" min="1" max="500" value="500"><span id="fw_fallUnloaded_val"></span>
+          <input type="range" id="fw_snapThreshold" min="50" max="2000" step="10" value="400"><span id="fw_snapThreshold_val"></span>
+          <input type="range" id="fly_punch" min="0" max="200" value="0"><span id="fly_punch_val"></span>
+          <input type="range" id="fly_revUp" min="50" max="2000" step="10" value="400"><span id="fly_revUp_val"></span>
+          <input type="range" id="fly_revDown" min="5" max="500" value="60"><span id="fly_revDown_val"></span>
+          <input type="range" id="fly_dump" min="50" max="1500" step="10" value="300"><span id="fly_dump_val"></span>
         </div>
       </div>
     </div>
@@ -666,6 +681,9 @@ function fwCheckWithConfirm(bytes, board, options) {
   const UUID_FW_FALL_LOADED   = '19b1000b-e8f2-537e-4f6c-d104768a1214';
   const UUID_FW_RISE_UNLOADED = '19b1000c-e8f2-537e-4f6c-d104768a1214';
   const UUID_FW_FALL_UNLOADED = '19b1000d-e8f2-537e-4f6c-d104768a1214';
+  const UUID_FW_SNAP_BOOST    = '19b10013-e8f2-537e-4f6c-d104768a1214';
+  const UUID_FW_SNAP_THR      = '19b10014-e8f2-537e-4f6c-d104768a1214';
+  const UUID_FW_SNAP_FALL     = '19b10015-e8f2-537e-4f6c-d104768a1214';
   const UUID_CL_REALISM       = '19b10017-e8f2-537e-4f6c-d104768a1214';
   const UUID_CL_IDLE          = '19b10018-e8f2-537e-4f6c-d104768a1214';
   const UUID_CL_IDLE_FADE     = '19b10019-e8f2-537e-4f6c-d104768a1214';
@@ -784,6 +802,7 @@ function fwCheckWithConfirm(bytes, board, options) {
     // Idle power — % от полного диапазона контроллера 500–2000 мВ (прошивка 2.16.7+)
     cl_idle: v => +v > 0 ? v + ' · ' + (500 + 15 * v) + ' mV' : 'Off',
     fly_punch: v => (v/100).toFixed(2),
+    fw_snapBoost: v => '+' + (v - 100) + ' %',
   };
 
   // Flywheel + ARB слайдеры
@@ -791,6 +810,7 @@ function fwCheckWithConfirm(bytes, board, options) {
    'tr_softness','tr_twistLow','tr_twistHigh','tr_return','tr_spdLow','tr_spdHigh',
    'fly_punch','fly_revUp','fly_revDown','fly_dump',
    'fw_riseLoaded','fw_fallLoaded','fw_riseUnloaded','fw_fallUnloaded',
+   'fw_snapBoost','fw_snapThreshold','fw_snapFall',
 
    'arb_kp','arb_ki','arb_maxOut','arb_clutchThr','arb_rpmThr',
    'arb_rateRise','arb_rateFall','arb_rpmFilter']
@@ -942,6 +962,9 @@ function fwCheckWithConfirm(bytes, board, options) {
     { id: 'fw_fallLoaded',    uuid: UUID_FW_FALL_LOADED,   type: 'float' },
     { id: 'fw_riseUnloaded',  uuid: UUID_FW_RISE_UNLOADED, type: 'float' },
     { id: 'fw_fallUnloaded',  uuid: UUID_FW_FALL_UNLOADED, type: 'float' },
+    { id: 'fw_snapBoost',     uuid: UUID_FW_SNAP_BOOST,    type: 'float_pct' },
+    { id: 'fw_snapThreshold', uuid: UUID_FW_SNAP_THR,      type: 'float' },
+    { id: 'fw_snapFall',      uuid: UUID_FW_SNAP_FALL,     type: 'float' },
     { id: 'arb_kp',           uuid: UUID_ARB_KP,           type: 'float_pct' },
     { id: 'arb_ki',           uuid: UUID_ARB_KI,           type: 'float_pct' },
     { id: 'arb_maxOut',       uuid: UUID_ARB_MAXOUT,       type: 'float' },
@@ -1267,10 +1290,12 @@ function fwCheckWithConfirm(bytes, board, options) {
   // Значения в единицах прошивки: для float_pct — доля, а не проценты ползунка.
   const RECOMMENDED = {
     cl_realism: 1.0,  cl_idleLevel: 31, cl_idle: 4, cl_idleFade: 500,
-    tr_softness: 0.32, tr_twistLow: 380, tr_twistHigh: 1440, tr_return: 570,
+    tr_softness: 0.32,  tr_return: 570,
     tr_spdLow: 300, tr_spdHigh: 1000,
-    fly_punch: 0.47, fly_revUp: 210, fly_revDown: 18, fly_dump: 300,
-    fw_riseLoaded: 281, fw_fallLoaded: 269, fw_riseUnloaded: 500, fw_fallUnloaded: 500,
+    fly_punch: 0, fly_revUp: 210, fly_revDown: 18, fly_dump: 300,
+    fw_riseLoaded: 281, fw_fallLoaded: 269, fw_riseUnloaded: 500, fw_fallUnloaded: 269,
+    fw_snapBoost: 1.38, fw_snapThreshold: 400, fw_snapFall: 500,
+    tr_twistLow: 400, tr_twistHigh: 1000,
     arb_kp: 0.04, arb_ki: 0.23, arb_maxOut: 30, arb_clutchThr: 35, arb_rpmThr: -5,
     arb_rateRise: 300, arb_rateFall: 200, arb_rpmFilter: 0.35,
   };
@@ -1387,21 +1412,12 @@ function fwCheckWithConfirm(bytes, board, options) {
     document.getElementById('fullyPressedValueA1').textContent  = prsA1;
     document.getElementById('fullyReleasedValueA1').textContent = relA1;
 
-    // Обороты мотора для шкалы и звука: при выжатом рычаге — маховик (раскрутка и медленный
-    // спад), при отпущенном — мотор (выход газа), между ними — смесь по положению рычага.
-    // В режиме Classic или при Punch 0 маховика нет — только выход газа.
-    const outputFinal = parts.length > 6 ? parseFloat(parts[6]) : null;
-    const flyRaw = parts.length > 7 ? parseFloat(parts[7]) : null;
-    let revs = null;
-    if (outputFinal !== null) {
+    // Предпросмотр: рычаг и газ с платы — в модель (обороты, звук, точка на графике Engine)
+    {
       const prs0 = parseFloat(parts[1]), rel0 = parseFloat(parts[2]);
-      const lever = prs0 !== rel0 ? Math.max(0, Math.min(1, (curA0 - rel0) / (prs0 - rel0))) : 0;
-      const flyOn = flyModeVirtual && flyRaw !== null && parseFloat(document.getElementById('fly_punch').value) > 0;
-      revs = flyOn ? lever * flyRaw + (1 - lever) * outputFinal : outputFinal;
-      revs = Math.max(0, Math.min(100, revs));
-      updateEngineSound(revs, 0, 100);
-    } else {
-      updateEngineSound(curA1, relA1, prsA1);
+      const lever = prs0 !== rel0 ? (curA0 - rel0) / (prs0 - rel0) * 100 : 0;
+      const gas = prsA1 !== relA1 ? (curA1 - relA1) / (prsA1 - relA1) * 100 : 0;
+      if (window.pvFeed) window.pvFeed(lever, gas, parts.length > 8 ? parseFloat(parts[8]) : null);
     }
 
     // Отклик газа (9–11-й элементы, прошивка 2.11.0+): скорость ручки, обороты колеса, кривая
@@ -1412,12 +1428,6 @@ function fwCheckWithConfirm(bytes, board, options) {
       document.getElementById('trLiveRpm').textContent  = rpm < 0 ? 'no link' : rpm;
       document.getElementById('trAggrBar').value = aggr;
       document.getElementById('trAggrVal').textContent = aggr.toFixed(0);
-    }
-
-    // Шкала оборотов: то же, что звук (см. выше)
-    if (revs !== null) {
-      document.getElementById('flyLevelBar').value = revs;
-      document.getElementById('flyLevelVal').textContent = revs.toFixed(0);
     }
 
     // Вертикальные линии
@@ -2162,6 +2172,309 @@ function fwCheckWithConfirm(bytes, board, options) {
   updateSliderBg(document.getElementById('freqMaxSlider'), '#ef4444');
   // ─────────────────────────────────────────────────────────────────────────
 </script>
-<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-16 15:36</p>
+<script>
+// ═══ Предпросмотр настроек: графики Clutch Model и Engine, измерители, точка, звук ═══
+// Значения берутся из ползунков страницы (они же уходят на плату) и из кривых основного
+// графика. Рычаг и газ — с платы (onSensorData → pvFeed).
+(() => {
+const $ = id => document.getElementById(id);
+const num = id => parseFloat($(id).value);
+const ramp = (t, t0, t1, a, b) => t <= t0 ? a : t >= t1 ? b : a + (b - a) * (t - t0) / (t1 - t0);
+const DEF_CL = [0, 6, 8, 13, 22, 37, 62, 78, 88, 94, 100], DEF_GAS = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+function curves() {
+  const d = (typeof myChart !== 'undefined' && myChart) ? myChart.data.datasets : null;
+  const pick = (i, def) => d && d[i] && d[i].data.length === 11 ? d[i].data.map(p => +p.y) : def;
+  return { cl: pick(0, DEF_CL), gas: pick(1, DEF_GAS) };
+}
+const curve = (c, pct) => { const x = Math.max(0, Math.min(10, pct / 10)), i = Math.min(9, Math.floor(x)); return c[i] + (c[i + 1] - c[i]) * (x - i); };
+function params() {
+  const c = curves();
+  return {
+    CL: c.cl, GAS: c.gas,
+    realism: num('cl_realism') / 100, idleLevel: num('cl_idleLevel'), idlePct: num('cl_idle'),
+    idleFade: Math.min(num('cl_idleFade'), 30000),
+    trMode: +$('trModeSel').value >= 1 ? 1 : 0, softness: num('tr_softness') / 100,
+    twistLow: num('tr_twistLow'), twistHigh: num('tr_twistHigh'), trReturn: num('tr_return'),
+    riseL: num('fw_riseLoaded'), revUp: num('fw_riseUnloaded'), fallL: num('fw_fallLoaded'),
+    snapBoost: num('fw_snapBoost') / 100, snapThr: num('fw_snapThreshold'), snapDur: num('fw_snapFall'),
+  };
+}
+let P = params();
+
+// ── модель: шаги 3–10 loop() прошивки (разгон под нагрузкой и без, общий спад, Clutch Snap) ──
+const clutchC = (lever, p) => lever >= 97 ? 0 : Math.max(0, Math.min(100, 100 - curve(p.CL, lever)));
+const newEngine = () => ({ cur: 0, prevGas: 0, gasRate: 0, aTwist: 0, prevCl: 0, clRate: 0, snap: 1, idleFade: 0 });
+function step(s, lever, gas, dt, p) {
+  const main = curve(p.GAS, gas), soft = main * (1 - p.softness * (1 - gas / 100));
+  s.gasRate += ((gas - s.prevGas) / dt - s.gasRate) * (dt / (0.02 + dt)); s.prevGas = gas;
+  const tgt = p.twistHigh > p.twistLow ? Math.max(0, Math.min(1, (s.gasRate - p.twistLow) / (p.twistHigh - p.twistLow))) : (s.gasRate >= p.twistHigh ? 1 : 0);
+  if (tgt > s.aTwist) s.aTwist = tgt;
+  else if (s.gasRate < -30 || gas < 2) s.aTwist = p.trReturn > 0 ? Math.max(0, s.aTwist - dt * 1000 / p.trReturn) : 0;
+  const aggr = p.trMode ? s.aTwist : 1, target = soft + (main - soft) * aggr;
+  s.clRate += ((lever - s.prevCl) / dt - s.clRate) * (dt / (0.015 + dt)); s.prevCl = lever;
+  if (-s.clRate > p.snapThr && s.cur > 10) s.snap = p.snapBoost;
+  const k = lever / 100, rise = p.riseL + (p.revUp - p.riseL) * k;
+  s.cur = target > s.cur ? Math.min(s.cur + rise * dt, target) : Math.max(s.cur - p.fallL * dt, target);
+  if (s.snap > 1) s.snap = Math.max(1, s.snap - (p.snapBoost - 1) / (p.snapDur / 1000) * dt);
+  const outFinal = Math.min(s.cur * s.snap, 100);
+  const start = 1000 + 2 * p.idleLevel, fromLevel = p.idleLevel > 100;
+  const idleV3 = fromLevel ? 1000 + 2 * p.idleLevel : 1000 + 30 * p.idlePct;
+  const idleEng = (fromLevel || p.idlePct > 0) ? Math.max(fromLevel ? 0.2 : 0, (idleV3 - start) / (4000 - start) * 100) : 0;
+  if (lever >= 3) s.idleFade = 1; else s.idleFade = p.idleFade > 0 ? Math.max(0, s.idleFade - dt * 1000 / p.idleFade) : 0;
+  const engine = Math.max(outFinal, idleEng * s.idleFade);
+  const C = clutchC(lever, p);
+  const out = (1 - p.realism) * engine * C / 100 + p.realism * Math.min(engine, C);
+  let v3 = out <= 0.1 ? 1000 : start + (4000 - start) * out / 100;
+  if (!fromLevel) v3 = Math.max(v3, 1000 + p.idleLevel * 2 * C / 100);
+  return { engine, revs: Math.max(s.cur, idleEng * s.idleFade), out, mv: v3 / 2, target };
+}
+
+// ── Chart.js в стиле основного графика ──
+const C_ = { blue: 'rgb(54, 162, 235)', red: 'rgb(255, 99, 132)', orange: 'rgb(255, 159, 64)', teal: 'rgb(75, 192, 192)', purple: 'rgb(153, 102, 255)' };
+const alpha = (c, a) => c.replace('rgb(', 'rgba(').replace(')', `, ${a})`);
+const marksPlugin = {
+  id: 'pvMarks',
+  afterDatasetsDraw(ch, _a, opts) {
+    const { ctx, chartArea: a, scales: { x, y } } = ch;
+    for (const m of (opts && opts.items) || []) {
+      const px = x.getPixelForValue(m.x);
+      ctx.save();
+      if (m.dot) {
+        ctx.fillStyle = m.color; ctx.beginPath(); ctx.arc(px, y.getPixelForValue(m.y), 8, 0, 2 * Math.PI); ctx.fill();
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; ctx.stroke();
+      } else if (m.label) {
+        const py = y.getPixelForValue(m.y);
+        ctx.fillStyle = '#fff'; ctx.strokeStyle = m.color || '#333'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(px, py, 4, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#222'; ctx.font = 'bold 13px Arial'; ctx.textAlign = 'center';
+        ctx.fillText(m.label, px + (m.dx || 0), py + (m.dy === undefined ? -9 : m.dy));
+      } else {
+        ctx.strokeStyle = '#bbb'; ctx.setLineDash([4, 4]);
+        ctx.beginPath(); ctx.moveTo(px, a.top); ctx.lineTo(px, a.bottom); ctx.stroke(); ctx.setLineDash([]);
+        if (m.text) { ctx.fillStyle = '#888'; ctx.font = '12px Arial'; ctx.fillText(m.text, px + 4, a.top + 12); }
+      }
+      ctx.restore();
+    }
+  },
+};
+function makeChart(cv) {
+  return new Chart(cv.getContext('2d'), {
+    type: 'line', data: { datasets: [] }, plugins: [marksPlugin],
+    options: {
+      maintainAspectRatio: false, animation: false, parsing: false, normalized: true,
+      elements: { point: { radius: 0 }, line: { borderWidth: 2 } },
+      plugins: { legend: { labels: { boxWidth: 30 } }, tooltip: { enabled: false }, datalabels: { display: false }, pvMarks: { items: [] }, dragData: false },
+      scales: { x: { type: 'linear' }, y: { min: 0, max: 100 } },
+    },
+  });
+}
+const pts = (xs, ys) => { const st = Math.max(1, Math.floor(xs.length / 300)), o = []; for (let i = 0; i < xs.length; i += st) o.push({ x: xs[i], y: ys[i] }); return o; };
+const ds = (label, xs, ys, color, o = {}) => Object.assign({ label, data: pts(xs, ys), borderColor: color, backgroundColor: alpha(color, 0.5), fill: false, tension: 0 }, o);
+const dashed = { borderDash: [6, 4], borderWidth: 1.5 };
+function setChart(ch, { x0, x1, y0 = 0, y1 = 100, xFmt, yFmt, datasets, marks = [] }) {
+  ch.data.datasets = datasets;
+  Object.assign(ch.options.scales.x, { min: x0, max: x1, ticks: { callback: xFmt, maxTicksLimit: 9 } });
+  Object.assign(ch.options.scales.y, { min: y0, max: y1, ticks: { callback: yFmt, maxTicksLimit: 6 } });
+  ch.options.plugins.pvMarks.items = marks;
+  ch.update('none');
+}
+const sec = v => +v.toFixed(1) + ' s', pct = v => v + '%', mvF = v => v + ' mV', noY = () => '';
+
+// ── Clutch Model ──
+const chClutch = makeChart($('pvClutchCv')), chIdle = makeChart($('pvIdleCv'));
+function drawClutch(p) {
+  const xs = [], o80 = [], o30 = [], cc = [];
+  for (let l = 0; l <= 100; l++) {
+    const C = clutchC(l, p), tr = e => (1 - p.realism) * e * C / 100 + p.realism * Math.min(e, C);
+    xs.push(l); cc.push(C); o80.push(tr(80)); o30.push(tr(30));
+  }
+  setChart(chClutch, { x0: 0, x1: 100, xFmt: v => v + '%', yFmt: pct, datasets: [
+    ds('Clutch passes', xs, cc, C_.blue, { fill: 'origin', backgroundColor: alpha(C_.blue, 0.15), borderWidth: 1.5 }),
+    ds('Throttle 80 %', xs, o80, C_.red), ds('Throttle 30 %', xs, o30, C_.orange)] });
+  const s = newEngine(), t = [], lev = [], mv = [];
+  for (let x = 0; x <= 4 + 1e-9; x += 0.005) {
+    const l = x < 0.3 ? ramp(x, 0, 0.3, 0, 100) : ramp(x, 0.8, 2.3, 100, 0), r = step(s, l, 0, 0.005, p);
+    t.push(x); lev.push(500 + 2 * l); mv.push(r.mv);
+  }
+  setChart(chIdle, { x0: 0, x1: 4, y0: 500, y1: 700, xFmt: sec, yFmt: mvF, datasets: [
+    ds('Lever', t, lev, C_.blue, dashed), ds('Output', t, mv, C_.teal, { borderWidth: 2.5 })],
+    marks: [{ x: 2.3, text: 'released' }] });
+}
+
+// ── Engine: выжал рычаг → газ 60 % → бросил сцепление → закрыл; пунктир — тот же газ без рычага ──
+const chEng = makeChart($('pvEngCv'));
+const REL_T0 = 1.4;
+let ENG = null;
+function drawEngine(p) {
+  const relS = 100 / (p.snapThr * 1.15), close = REL_T0 + relS + p.snapDur / 1000 + 0.4, T = close + 60 / p.fallL + 0.2;
+  const scen = t => ({ lever: t < 0.2 ? ramp(t, 0, 0.2, 0, 100) : ramp(t, REL_T0, REL_T0 + relS, 100, 0),
+                       gas: t < 0.4 ? 0 : t < close ? ramp(t, 0.4, 0.45, 0, 60) : 0 });
+  const st = newEngine(), ul = newEngine(), dt = 0.005, pp = Object.assign({}, p, { trMode: 0 });
+  const xs = [], load = [], revs = [], out = []; let boostOn = false;
+  for (let t = 0; t <= T + 1e-9; t += dt) {
+    const u = scen(t), r = step(st, u.lever, u.gas, dt, pp), r0 = step(ul, 0, u.gas, dt, pp);
+    const prev = boostOn; boostOn = st.snap > 1 || (t >= REL_T0 && t <= REL_T0 + relS);
+    xs.push(t); load.push(r0.revs); revs.push(r.revs); out.push(boostOn || prev ? r.out : null);
+  }
+  const iA = xs.findIndex(t => t >= REL_T0);
+  let iB = iA; while (iB < xs.length && out[iB] !== null && out[iB] < revs[iB]) iB++;
+  let peak = -1; for (let i = iA; i < xs.length && out[i] !== null; i++) peak = Math.max(peak, out[i]);
+  let iC = iA; while (out[iC] !== null && out[iC] < peak - 0.3) iC++;
+  let iD = iC; while (out[iD + 1] !== null && out[iD + 1] >= peak - 0.3) iD++;
+  let iE = iD; while (iE + 1 < xs.length && out[iE + 1] !== null) iE++;
+  const L = (i, label, o = {}) => Object.assign({ x: xs[i], y: out[i], label, color: C_.teal }, o);
+  let pB = L(iB, 'B', { dx: -10, dy: 4 });
+  if (iB > iA && out[iB - 1] !== null) {
+    const d0 = revs[iB - 1] - out[iB - 1], d1 = revs[iB] - out[iB], k = d0 / (d0 - d1 || 1);
+    pB = Object.assign(pB, { x: xs[iB - 1] + k * (xs[iB] - xs[iB - 1]), y: revs[iB - 1] + k * (revs[iB] - revs[iB - 1]) });
+  }
+  const letters = [L(iA, 'A', { dx: -9, dy: 4 }), pB, L(iC, 'C', { dx: -6 }),
+                   ...(xs[iD] - xs[iC] > 0.03 ? [L(iD, 'D', { dx: 6 })] : []), L(iE, 'E', { dx: 8, dy: -6 })];
+  const snapData = xs.map((x, i) => ({ x, y: out[i] })).filter((pt, i) => out[i] !== null || out[i - 1] !== null || out[i + 1] !== null);
+  setChart(chEng, { x0: 0, x1: T, xFmt: sec, yFmt: noY, datasets: [
+    ds('Engine revs, under load', xs, load, C_.purple, dashed),
+    ds('Engine revs, no load', xs, revs, C_.orange, { fill: 'origin', backgroundColor: alpha(C_.orange, 0.2), borderWidth: 2.5 }),
+    Object.assign(ds('Snap boost', [], [], C_.teal), { data: snapData, borderWidth: 2.5, fill: { target: 1, above: alpha(C_.teal, 0.35), below: 'transparent' }, spanGaps: false })],
+    marks: [{ x: 0.4, text: 'rev' }, { x: REL_T0, text: 'dump' }, ...letters] });
+  ENG = { xs, out, revs, xA: xs[iA], xB: pB.x, xD: REL_T0 + relS, xE: xs[iE], marks: chEng.options.plugins.pvMarks.items.slice() };
+}
+
+// перерисовка, когда меняются настройки или кривые основного графика
+let sig = '';
+function redrawIfChanged() {
+  P = params();
+  const k = JSON.stringify(P);
+  if (k !== sig) { sig = k; drawClutch(P); drawEngine(P); }
+}
+setInterval(redrawIfChanged, 250);
+
+// ── «Rev drop» общий: спад без нагрузки = спад под нагрузкой ──
+$('fw_fallLoaded').addEventListener('input', () => {
+  const u = $('fw_fallUnloaded'); u.value = $('fw_fallLoaded').value; u.dispatchEvent(new Event('input'));
+});
+
+// ── перетаскиваемые метки: пишут в старые ползунки (а те — на плату) ──
+function bindMark(markId, inputId, full, clamp) {
+  const el = $(markId), meter = el.parentElement, inp = $(inputId);
+  el.addEventListener('pointerdown', e => {
+    el.setPointerCapture(e.pointerId);
+    const move = ev => {
+      const r = meter.getBoundingClientRect();
+      let v = Math.round(Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)) * full / 10) * 10;
+      v = clamp(v);
+      if (+inp.value !== v) { inp.value = v; inp.dispatchEvent(new Event('input')); }
+    };
+    move(e);
+    el.onpointermove = move;
+    el.onpointerup = el.onpointercancel = () => { el.onpointermove = null; inp.dispatchEvent(new Event('change')); };
+  });
+}
+const TFULL = 1500, RFULL = 2000;
+bindMark('twLow', 'tr_twistLow', TFULL, v => Math.max(20, Math.min(v, num('tr_twistHigh') - 10)));
+bindMark('twHigh', 'tr_twistHigh', TFULL, v => Math.max(v, num('tr_twistLow') + 10));
+bindMark('relThr', 'fw_snapThreshold', RFULL, v => Math.max(50, v));
+
+const IN = { gas: 0, lever: 0 };   // рычаг и газ — только с платы
+
+// ── данные с платы: уведомления ~20 в секунду; между ними — линейно, шагами по 5 мс ──
+const LIVE = { q: [], last: null, rate: null, at: 0 };
+window.pvFeed = (lever, gas, rate) => {
+  LIVE.q.push({ t: performance.now() / 1000, lever: Math.max(0, Math.min(100, lever)), gas: Math.max(0, Math.min(100, gas)) });
+  LIVE.rate = rate; LIVE.at = performance.now();
+};
+const isLive = () => performance.now() - LIVE.at < 500;
+
+// ── живая модель, точка, измерители, звук ──
+const S = newEngine();
+let simT = 0, lastNow = performance.now(), lastR = null;
+const DOT = { fast: false, outT: null, state: 'engaged' };
+const REL = { moving: false, peak: 0 }, TW = { moving: false, peak: 0 };
+const engAt = (arr, x) => arr[Math.max(0, Math.min(ENG.xs.length - 1, Math.round(x / 0.005)))];
+function dotPos(lever) {
+  if (lever >= 97) { DOT.fast = false; DOT.outT = null; DOT.state = 'pulled'; return { x: ENG.xA, y: 0 }; }
+  if (DOT.state === 'engaged' && lever <= 1) return { x: ENG.xE, y: engAt(ENG.revs, ENG.xE) };
+  if (-S.clRate > P.snapThr) DOT.fast = true;   // путь точки — только от скорости рычага
+  const onPath = x => {
+    const o = engAt(ENG.out, x), r = engAt(ENG.revs, x);
+    if (x <= ENG.xB) return o === null ? 0 : Math.min(o, r);
+    if (DOT.fast && o !== null) return o;
+    return r;
+  };
+  if (lever > 1) { DOT.state = 'moving'; DOT.outT = null; const x = ENG.xA + (100 - lever) / 100 * (ENG.xD - ENG.xA); return { x, y: onPath(x) }; }
+  if (DOT.outT === null) DOT.outT = simT;
+  const x = Math.min(ENG.xE, ENG.xD + (simT - DOT.outT));
+  if (x >= ENG.xE) DOT.state = 'engaged';
+  return { x, y: onPath(x) };
+}
+function meterPeak(st, val, fillId, peakId, full) {
+  if (val > 30) { st.moving = true; st.peak = Math.max(st.peak, val); return null; }
+  if (!st.moving) return null;
+  st.moving = false; const pk = $(peakId);
+  pk.style.display = 'block'; pk.style.left = Math.min(100, st.peak / full * 100) + '%';
+  const v = st.peak; st.peak = 0; return v;
+}
+function tick(now) {
+  const real = Math.min(0.1, (now - lastNow) / 1000); lastNow = now;
+  const live = isLive();
+  let r;
+  if (live) {
+    while (LIVE.q.length) {
+      const row = LIVE.q.shift();
+      if (!LIVE.last) { LIVE.last = row; continue; }
+      const span = Math.min(0.2, Math.max(0.001, row.t - LIVE.last.t)), n = Math.max(1, Math.round(span / 0.005));
+      for (let i = 1; i <= n; i++) {
+        const k = i / n;
+        IN.lever = LIVE.last.lever + (row.lever - LIVE.last.lever) * k; IN.gas = LIVE.last.gas + (row.gas - LIVE.last.gas) * k;
+        r = step(S, IN.lever, IN.gas, span / n, P); simT += span / n;
+      }
+      LIVE.last = row;
+    }
+  } else {
+    // платы нет — всё стоит: газ закрыт, рычаг отпущен
+    LIVE.last = null; LIVE.q.length = 0; IN.lever = 0; IN.gas = 0;
+    for (let n = Math.max(1, Math.round(real / 0.005)); n > 0; n--) { r = step(S, 0, 0, 0.005, P); simT += 0.005; }
+  }
+  r = r || lastR || step(S, IN.lever, IN.gas, 0.001, P); lastR = r;
+
+  // обороты и звук
+  $('pvRevsBar').value = r.revs; $('pvRevsVal').textContent = r.revs.toFixed(0);
+  if (typeof updateEngineSound === 'function') updateEngineSound(r.revs, 0, 100);
+
+  // точка на графике Engine
+  if (ENG) {
+    const d = dotPos(IN.lever);
+    chEng.options.plugins.pvMarks.items = ENG.marks.concat([{ x: d.x, y: d.y, dot: true, color: C_.teal }]);
+    chEng.update('none');
+  }
+
+  // скорость отпускания сцепления и метка Snap
+  const rel = Math.max(0, -S.clRate), rf = $('relFill');
+  rf.style.width = Math.min(100, rel / RFULL * 100) + '%'; rf.classList.toggle('over', rel > P.snapThr);
+  $('relThr').style.left = Math.min(100, P.snapThr / RFULL * 100) + '%'; $('relThrV').textContent = P.snapThr;
+  $('relVal').textContent = rel.toFixed(0);
+  const rp = meterPeak(REL, rel, 'relFill', 'relPeak', RFULL);
+  if (rp !== null) $('relLast').textContent = rp.toFixed(0) + ' %/s — ' + (rp > P.snapThr ? 'snap ✓' : 'slow, no snap');
+
+  // скорость ручки газа: с платы — её собственный расчёт, иначе — модель
+  const tw = Math.max(0, live && LIVE.rate !== null ? LIVE.rate : S.gasRate), tf = $('twFill');
+  tf.style.width = Math.min(100, tw / TFULL * 100) + '%';
+  const lo = Math.min(100, P.twistLow / TFULL * 100), hi = Math.min(100, P.twistHigh / TFULL * 100);
+  $('twMeter').style.background = `linear-gradient(to right, rgba(76,175,80,.3) 0 ${lo}%, rgba(255,159,64,.35) ${lo}% ${hi}%, rgba(229,57,53,.3) ${hi}% 100%)`;
+  $('twLow').style.left = lo + '%'; $('twHigh').style.left = hi + '%';
+  $('twLowV').textContent = P.twistLow; $('twHighV').textContent = P.twistHigh;
+  $('twVal').textContent = tw.toFixed(0);
+  const tp = meterPeak(TW, tw, 'twFill', 'twPeak', TFULL);
+  if (tp !== null) {
+    const share = P.twistHigh > P.twistLow ? Math.max(0, Math.min(1, (tp - P.twistLow) / (P.twistHigh - P.twistLow))) : (tp >= P.twistHigh ? 1 : 0);
+    $('twLast').textContent = tp.toFixed(0) + ' %/s — ' + (share <= 0 ? 'soft curve' : share >= 1 ? 'main curve' : 'blend, main ' + Math.round(share * 100) + ' %');
+  }
+  requestAnimationFrame(tick);
+}
+redrawIfChanged();
+requestAnimationFrame(tick);
+})();
+
+</script>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-16 19:40</p>
 </body>
 </html>
