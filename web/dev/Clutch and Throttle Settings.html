@@ -323,10 +323,6 @@
           <span class="slider-value" id="fw_fallUnloaded_val">500</span>
         </div>
       </div>
-      <div class="card">
-        <h3>Flywheel Mode <button class="info-btn" onclick="showInfo('Flywheel Mode','<p><b>Classic:</b> Rev Hang + Clutch Snap — fixed boost on a fast clutch release.</p><p><b>Virtual Flywheel:</b> energy model — the burst depends on how much you revved with the clutch pulled.</p><p>Only one works at a time. Hidden settings are kept and come back when you switch. Saved per preset.</p>')">i</button></h3>
-        <button id="flyModeBtn" class="button-full" style="background:#888;">Mode: Classic (Rev Hang + Clutch Snap)</button>
-      </div>
       <div class="card" id="virtualFlyCard">
         <h3>Virtual Flywheel <button class="info-btn" onclick="showInfo('Virtual Flywheel','<p>Stores energy like an ICE flywheel. With the clutch pulled, throttle spins it up; releasing the clutch sends the stored energy to the wheel as a burst on top of the throttle. With the clutch engaged it does not recharge — no effect in normal riding.</p><p><b>Punch:</b> burst strength = flywheel revs × punch. 0 = off. Range 0–2.</p><p><b>Rev-up speed:</b> how fast throttle spins the flywheel with the clutch pulled, %/sec. Range 50–2000.</p><p><b>Rev drop:</b> how fast revs fall with the throttle closed, %/sec. Lower = heavier flywheel, holds revs longer. Range 5–500.</p><p><b>Release time:</b> how long the stored energy takes to go into the wheel with the clutch fully engaged, ms. Slipping the clutch makes it longer and softer. Range 50–1500.</p><p><b>Engine revs</b> — live: with the lever pulled it shows the flywheel (spin-up and slow drop), with the lever released — the engine throttle. The engine sound follows it.</p>')">i</button></h3>
         <label>Engine revs (live)</label>
@@ -353,37 +349,6 @@
         <div class="slider-row">
           <input type="range" id="fly_dump" min="50" max="1500" step="10" value="300">
           <span class="slider-value" id="fly_dump_val">300</span>
-        </div>
-      </div>
-      <div class="card" id="revHangCard">
-        <h3>Rev Hang <button class="info-btn" onclick="showInfo('Rev Hang','<p>Power hangs for a moment when you quickly pull the clutch.</p><p><b>Hang Duration:</b> how long (ms) power stays high after a fast clutch pull. Range: 0–500.</p><p><b>Hang Threshold:</b> how fast you must pull the clutch to trigger the effect, %/sec (300 = full lever travel in 1/3 s). Range: 50–2000.</p>')">i</button></h3>
-        <label>Hang duration (ms)</label>
-        <div class="slider-row">
-          <input type="range" id="fw_hangDuration" min="0" max="500" value="500">
-          <span class="slider-value" id="fw_hangDuration_val">500</span>
-        </div>
-        <label>Hang threshold (clutch pull speed, %/s)</label>
-        <div class="slider-row">
-          <input type="range" id="fw_hangThreshold" min="50" max="2000" step="10" value="300">
-          <span class="slider-value" id="fw_hangThreshold_val">300</span>
-        </div>
-      </div>
-      <div class="card" id="snapCard">
-        <h3>Clutch Snap <button class="info-btn" onclick="showInfo('Clutch Snap','<p>When you release the clutch lever sharply, there is a brief power spike.</p><p><b>Snap Boost:</b> how much the signal spikes. 100 = no boost, 132 = +32%, 200 = double. Range: 100–200.</p><p><b>Snap Threshold:</b> how fast you must release the clutch to trigger snap, %/sec (400 = full lever travel in 1/4 s). Range: 50–2000.</p><p><b>Snap Duration:</b> how long (ms) the boost decays back to normal. Range: 10–500.</p>')">i</button></h3>
-        <label>Snap boost (%)</label>
-        <div class="slider-row">
-          <input type="range" id="fw_snapBoost" min="100" max="200" value="132">
-          <span class="slider-value" id="fw_snapBoost_val">132</span>
-        </div>
-        <label>Snap threshold (release speed, %/s)</label>
-        <div class="slider-row">
-          <input type="range" id="fw_snapThreshold" min="50" max="2000" step="10" value="400">
-          <span class="slider-value" id="fw_snapThreshold_val">400</span>
-        </div>
-        <label>Snap duration (ms)</label>
-        <div class="slider-row">
-          <input type="range" id="fw_snapFall" min="10" max="500" value="500">
-          <span class="slider-value" id="fw_snapFall_val">500</span>
         </div>
       </div>
     </div>
@@ -701,11 +666,6 @@ function fwCheckWithConfirm(bytes, board, options) {
   const UUID_FW_FALL_LOADED   = '19b1000b-e8f2-537e-4f6c-d104768a1214';
   const UUID_FW_RISE_UNLOADED = '19b1000c-e8f2-537e-4f6c-d104768a1214';
   const UUID_FW_FALL_UNLOADED = '19b1000d-e8f2-537e-4f6c-d104768a1214';
-  const UUID_FW_HANG_DUR      = '19b10011-e8f2-537e-4f6c-d104768a1214';
-  const UUID_FW_HANG_THR      = '19b10012-e8f2-537e-4f6c-d104768a1214';
-  const UUID_FW_SNAP_BOOST    = '19b10013-e8f2-537e-4f6c-d104768a1214';
-  const UUID_FW_SNAP_THR      = '19b10014-e8f2-537e-4f6c-d104768a1214';
-  const UUID_FW_SNAP_FALL     = '19b10015-e8f2-537e-4f6c-d104768a1214';
   const UUID_CL_REALISM       = '19b10017-e8f2-537e-4f6c-d104768a1214';
   const UUID_CL_IDLE          = '19b10018-e8f2-537e-4f6c-d104768a1214';
   const UUID_CL_IDLE_FADE     = '19b10019-e8f2-537e-4f6c-d104768a1214';
@@ -831,8 +791,7 @@ function fwCheckWithConfirm(bytes, board, options) {
    'tr_softness','tr_twistLow','tr_twistHigh','tr_return','tr_spdLow','tr_spdHigh',
    'fly_punch','fly_revUp','fly_revDown','fly_dump',
    'fw_riseLoaded','fw_fallLoaded','fw_riseUnloaded','fw_fallUnloaded',
-   'fw_hangDuration','fw_hangThreshold',
-   'fw_snapBoost','fw_snapThreshold','fw_snapFall',
+
    'arb_kp','arb_ki','arb_maxOut','arb_clutchThr','arb_rpmThr',
    'arb_rateRise','arb_rateFall','arb_rpmFilter']
     .forEach(id => bindSlider(id, id+'_val', sliderDisp[id]));
@@ -983,11 +942,6 @@ function fwCheckWithConfirm(bytes, board, options) {
     { id: 'fw_fallLoaded',    uuid: UUID_FW_FALL_LOADED,   type: 'float' },
     { id: 'fw_riseUnloaded',  uuid: UUID_FW_RISE_UNLOADED, type: 'float' },
     { id: 'fw_fallUnloaded',  uuid: UUID_FW_FALL_UNLOADED, type: 'float' },
-    { id: 'fw_hangDuration',  uuid: UUID_FW_HANG_DUR,      type: 'float' },
-    { id: 'fw_hangThreshold', uuid: UUID_FW_HANG_THR,      type: 'float' },
-    { id: 'fw_snapBoost',     uuid: UUID_FW_SNAP_BOOST,    type: 'float_pct' },
-    { id: 'fw_snapThreshold', uuid: UUID_FW_SNAP_THR,      type: 'float' },
-    { id: 'fw_snapFall',      uuid: UUID_FW_SNAP_FALL,     type: 'float' },
     { id: 'arb_kp',           uuid: UUID_ARB_KP,           type: 'float_pct' },
     { id: 'arb_ki',           uuid: UUID_ARB_KI,           type: 'float_pct' },
     { id: 'arb_maxOut',       uuid: UUID_ARB_MAXOUT,       type: 'float' },
@@ -1040,7 +994,11 @@ function fwCheckWithConfirm(bytes, board, options) {
           applySliderValue(s, vals.get(bulkId(s.uuid)));
           return false;
         });
-        if (vals.has(bulkId(UUID_FLY_MODE))) { flyModeVirtual = vals.get(bulkId(UUID_FLY_MODE)) >= 0.5; updateFlyModeUI(); needFlyMode = false; }
+        if (vals.has(bulkId(UUID_FLY_MODE))) {
+          // старая прошивка в режиме Classic — переключаем на маховик (Classic убран)
+          if (vals.get(bulkId(UUID_FLY_MODE)) < 0.5 && charFlyMode) await q.run(() => charFlyMode.writeValue(new Float32Array([1])));
+          needFlyMode = false;
+        }
         if (vals.has(bulkId(UUID_TR_MODE)))  { trMode = Math.round(vals.get(bulkId(UUID_TR_MODE))) || 0; updateTrUI(); needTrMode = false; }
       } catch(e) { console.error('loadFW bulk', e); }
     }
@@ -1074,32 +1032,17 @@ function fwCheckWithConfirm(bytes, board, options) {
     });
   });
 
-  // ── Flywheel Mode: Classic (Rev Hang + Clutch Snap) / Virtual Flywheel ──
-  // Скрытые карточки сохраняют значения — прошивка их просто не применяет
+  // ── Flywheel Mode: Classic (Rev Hang + Clutch Snap) убран, работает только Virtual Flywheel ──
+  // Прошивка 2.16.8+ режим не читает. На старой прошивке режим Classic переключаем
+  // на маховик сразу при подключении, чтобы плата вела себя так, как показывает страница.
   let charFlyMode = null;
-  let flyModeVirtual = false;
-  function updateFlyModeUI() {
-    const btn = document.getElementById('flyModeBtn');
-    btn.style.background = flyModeVirtual ? '#24af24' : '#888';
-    btn.textContent = flyModeVirtual ? 'Mode: Virtual Flywheel'
-                                     : 'Mode: Classic (Rev Hang + Clutch Snap)';
-    document.getElementById('virtualFlyCard').style.display = flyModeVirtual ? '' : 'none';
-    document.getElementById('revHangCard').style.display    = flyModeVirtual ? 'none' : '';
-    document.getElementById('snapCard').style.display       = flyModeVirtual ? 'none' : '';
-  }
+  const flyModeVirtual = true;
+  function updateFlyModeUI() {}
   async function loadFlyMode() {
     if (!charFlyMode) return;
     const val = await q.run(() => charFlyMode.readValue());
-    flyModeVirtual = readFloat(val) >= 0.5;
-    updateFlyModeUI();
+    if (readFloat(val) < 0.5) await q.run(() => charFlyMode.writeValue(new Float32Array([1])));
   }
-  document.getElementById('flyModeBtn').addEventListener('click', () => {
-    if (!charFlyMode) return;
-    flyModeVirtual = !flyModeVirtual;
-    q.run(() => charFlyMode.writeValue(new Float32Array([flyModeVirtual ? 1 : 0])));
-    updateFlyModeUI();
-  });
-  updateFlyModeUI();
 
   // ── Throttle Response: режим выбора мягкой/основной кривой газа ──
   let charTrMode = null;
@@ -1143,12 +1086,11 @@ function fwCheckWithConfirm(bytes, board, options) {
   function applyCapabilities() {
     fwSliders.forEach(s => setControlSupported(document.getElementById(s.id), !!charFW[s.id]));
     document.getElementById('idleZones').classList.toggle('fw-unsupported', !charFW['cl_idleLevel']);
-    setControlSupported(document.getElementById('flyModeBtn'), !!charFlyMode);
     setControlSupported(document.getElementById('trModeSel'), !!charTrMode);
     setControlSupported(document.getElementById('arbEnabledBtn'), !!charArbEnabled);
     // Карточка без единого рабочего элемента не нужна
     document.querySelectorAll('#flywheelSection .card, #arbSection .card').forEach(card => {
-      const controls = card.querySelectorAll('input[type="range"], #flyModeBtn, #trModeSel, #arbEnabledBtn');
+      const controls = card.querySelectorAll('input[type="range"], #trModeSel, #arbEnabledBtn');
       const anyWorks = Array.from(controls).some(el =>
         !(el.closest('.slider-row') || el).classList.contains('fw-unsupported'));
       card.classList.toggle('fw-unsupported', !anyWorks);
@@ -1329,7 +1271,6 @@ function fwCheckWithConfirm(bytes, board, options) {
     tr_spdLow: 300, tr_spdHigh: 1000,
     fly_punch: 0.47, fly_revUp: 210, fly_revDown: 18, fly_dump: 300,
     fw_riseLoaded: 281, fw_fallLoaded: 269, fw_riseUnloaded: 500, fw_fallUnloaded: 500,
-    fw_hangDuration: 500, fw_hangThreshold: 300, fw_snapBoost: 1.38, fw_snapThreshold: 400, fw_snapFall: 500,
     arb_kp: 0.04, arb_ki: 0.23, arb_maxOut: 30, arb_clutchThr: 35, arb_rpmThr: -5,
     arb_rateRise: 300, arb_rateFall: 200, arb_rpmFilter: 0.35,
   };
@@ -1971,7 +1912,7 @@ function fwCheckWithConfirm(bytes, board, options) {
     charEnwLocked = null; enwLocked = false; gearPreset = 0;
     charArbEnabled = null; arbEnabled = false; updateArbBtn();
     emergencyActive = false; updateEmergencyBtn();
-    charFlyMode = null; flyModeVirtual = false; updateFlyModeUI();
+    charFlyMode = null;
     charTrMode = null; trMode = 0; updateTrUI();
     charBulk = null; charMap = new Map();
     charGuidedCal = null; setGuidedCalSupported(false);
@@ -2221,6 +2162,6 @@ function fwCheckWithConfirm(bytes, board, options) {
   updateSliderBg(document.getElementById('freqMaxSlider'), '#ef4444');
   // ─────────────────────────────────────────────────────────────────────────
 </script>
-<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-16 15:22</p>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-16 15:36</p>
 </body>
 </html>
