@@ -951,6 +951,12 @@ function fwCheckWithConfirm(bytes, board, options) {
       }, { capture: true, passive: false });
     }
 
+    // dragdata вешает d3-drag на ВСЕ графики, и тот гасит touchmove → страница не скроллится.
+    // На графиках без перетаскиваемых точек касание до холста не пускаем вовсе.
+    document.addEventListener('touchstart', e => {
+      if (e.target instanceof HTMLCanvasElement && e.target.id !== 'chartJSContainer') e.stopPropagation();
+    }, { capture: true });
+
     // Показываем для предпросмотра без BLE
     ['basicSection','emergencySection','flywheelSection','soundSection'].forEach(show);
   });
@@ -2584,6 +2590,6 @@ requestAnimationFrame(tick);
   };
 })();
 </script>
-<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-16 23:10</p>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-16 23:17</p>
 </body>
 </html>
