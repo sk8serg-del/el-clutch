@@ -120,6 +120,8 @@
   .meter-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: #2a86d6; border-radius: 3px; }
   .meter-fill.over { background: rgb(75, 192, 192); }
   .meter-peak { position: absolute; top: -2px; bottom: -2px; width: 2px; background: #555; left: 0; display: none; }
+  /* графики не мешают скроллить страницу пальцем; d3-drag в dragdata ставит inline touch-action:none */
+  canvas { touch-action: pan-y !important; }
   .meter-thr { position: absolute; top: 50%; width: 0; cursor: pointer; touch-action: none; }
   .meter-thr::after { content: ''; position: absolute; left: -10px; top: -10px; width: 20px; height: 20px;
     box-sizing: border-box; background: #fff; border: 2px solid #e53935; border-radius: 50%; }
@@ -927,6 +929,27 @@ function fwCheckWithConfirm(bytes, board, options) {
         localStorage.setItem('chartDataGas',    JSON.stringify(myChart.data.datasets[1].data));        if (charCoefs) sendChartToBle();
       }
     };
+
+    // Телефон: палец рядом с точкой кривой — тянем точку, мимо — скроллим страницу.
+    // Ловим touchstart раньше dragdata (capture на родителе): мимо точки событие до холста
+    // не доходит, рядом — гасим скролл страницы.
+    {
+      const cv = document.getElementById('chartJSContainer');
+      const HIT = 28;   // px вокруг точки
+      cv.parentElement.addEventListener('touchstart', e => {
+        if (e.target !== cv || e.touches.length !== 1) return;
+        const r = cv.getBoundingClientRect(), t = e.touches[0];
+        const x = t.clientX - r.left, y = t.clientY - r.top;
+        let near = false;
+        myChart.data.datasets.forEach((_, i) => {
+          const meta = myChart.getDatasetMeta(i);
+          if (meta.hidden) return;
+          for (const pt of meta.data) if (Math.hypot(pt.x - x, pt.y - y) <= HIT) { near = true; break; }
+        });
+        if (near) e.preventDefault();   // тянем точку
+        else e.stopPropagation();       // скролл страницы, dragdata не видит касание
+      }, { capture: true, passive: false });
+    }
 
     // Показываем для предпросмотра без BLE
     ['basicSection','emergencySection','flywheelSection','soundSection'].forEach(show);
@@ -2561,6 +2584,6 @@ requestAnimationFrame(tick);
   };
 })();
 </script>
-<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-16 23:00</p>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-16 23:10</p>
 </body>
 </html>
