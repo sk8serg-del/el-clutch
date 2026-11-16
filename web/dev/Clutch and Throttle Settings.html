@@ -222,7 +222,7 @@
     <!-- Flywheel v2 слайдеры -->
     <div id="flywheelSection" class="section">
       <div class="card">
-        <h3>Clutch Model <button class="info-btn" onclick="showInfo('Clutch Model','<p>C = how much power the clutch can pass at the current lever position (0 = pulled, 100 = released).</p><p><b>Clutch realism:</b> 0 = lever scales throttle (gas × C, old behaviour). 1 = real clutch: output = min(gas, C) — slips while gas is above C, bites earlier with less gas. In between = blend. Range 0–1.</p><p><b>Idle power:</b> virtual engine idle — pull when releasing the lever with throttle closed. 0 = off. Range 0–20 %.</p><p><b>Idle fade:</b> with the lever fully released, idle fades out over this time so the bike does not creep by itself. Touch the lever to re-arm. Range 100–3000 ms.</p><p><b>Start voltage:</b> controller voltage where the motor starts to move. Any non-zero output starts from here, so the first % of throttle is not lost in the dead zone. Set slightly below the real start (e.g. 580 if it moves at 590). 500 = off.</p>')">i</button></h3>
+        <h3>Clutch Model <button class="info-btn" onclick="showInfo('Clutch Model','<p>C = how much power the clutch can pass at the current lever position (0 = pulled, 100 = released).</p><p><b>Clutch realism:</b> 0 = lever scales throttle (gas × C, old behaviour). 1 = real clutch: output = min(gas, C) — slips while gas is above C, bites earlier with less gas. In between = blend. Range 0–1.</p><p><b>Idle power:</b> virtual engine idle — pull when releasing the lever with throttle closed. % of the full controller range 500–2000 mV (4 % = 560 mV), so Idle level and Start voltage do not change it. Below Start voltage / Idle level it gives no pull. 0 = off. Range 0–20 %.</p><p><b>Idle fade:</b> with the lever fully released, idle fades out over this time so the bike does not creep by itself. Touch the lever to re-arm. Range 100–3000 ms.</p><p><b>Start voltage:</b> controller voltage where the motor starts to move. Any non-zero output starts from here, so the first % of throttle is not lost in the dead zone. Set slightly below the real start (e.g. 580 if it moves at 590). 500 = off.</p>')">i</button></h3>
         <label>Clutch realism (0 = gas×C, 1 = min)</label>
         <div class="slider-row">
           <input type="range" id="cl_realism" min="0" max="100" value="0">
@@ -828,6 +828,8 @@ function fwCheckWithConfirm(bytes, board, options) {
     cl_realism: v => (v/100).toFixed(2),
     cl_idleFade: v => v >= 31000 ? 'Off' : (v/1000).toFixed(1) + ' s',
     cl_startMv: v => v - 500,
+    // Idle power — % от полного диапазона контроллера 500–2000 мВ (прошивка 2.16.7+)
+    cl_idle: v => +v > 0 ? v + ' · ' + (500 + 15 * v) + ' mV' : 'Off',
     fly_punch: v => (v/100).toFixed(2),
   };
 
@@ -1330,7 +1332,7 @@ function fwCheckWithConfirm(bytes, board, options) {
   // прошивке 2.15.6+) и сохраняет его. Калибровка датчиков и другие пресеты не меняются.
   // Значения в единицах прошивки: для float_pct — доля, а не проценты ползунка.
   const RECOMMENDED = {
-    cl_realism: 1.0,  cl_idleLevel: 31, cl_idle: 2, cl_idleFade: 500, cl_startMv: 500,
+    cl_realism: 1.0,  cl_idleLevel: 31, cl_idle: 4, cl_idleFade: 500, cl_startMv: 500,
     tr_softness: 0.32, tr_twistLow: 380, tr_twistHigh: 1440, tr_return: 570,
     tr_spdLow: 300, tr_spdHigh: 1000,
     fly_punch: 0.47, fly_revUp: 210, fly_revDown: 18, fly_dump: 300,
@@ -2219,6 +2221,6 @@ function fwCheckWithConfirm(bytes, board, options) {
   updateSliderBg(document.getElementById('freqMaxSlider'), '#ef4444');
   // ─────────────────────────────────────────────────────────────────────────
 </script>
-<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-14 16:21</p>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-16 14:38</p>
 </body>
 </html>
