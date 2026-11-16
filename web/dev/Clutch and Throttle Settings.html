@@ -2137,6 +2137,12 @@ function fwCheckWithConfirm(bytes, board, options) {
     gainNode.gain.setTargetAtTime(masterVol * (0.15 + norm * 0.85), audioCtx.currentTime, 0.05);
   }
 
+  function muteEngineSound() {
+    if (!audioCtx || !gainNode) return;
+    gainNode.gain.setTargetAtTime(0, audioCtx.currentTime, 0.05);
+  }
+  window.muteEngineSound = muteEngineSound;
+
   function saveAudioSettings() {
     localStorage.setItem('audioSettings', JSON.stringify({
       masterVol, freqMin, freqMax,
@@ -2453,7 +2459,9 @@ function tick(now) {
 
   // обороты и звук
   $('pvRevsBar').value = r.revs; $('pvRevsVal').textContent = r.revs.toFixed(0);
-  if (typeof updateEngineSound === 'function') updateEngineSound(r.revs, 0, 100);
+  // звук только пока идут данные с платы; до подключения и после обрыва — тишина
+  if (live) { if (typeof updateEngineSound === 'function') updateEngineSound(r.revs, 0, 100); }
+  else if (typeof muteEngineSound === 'function') muteEngineSound();
 
   // точка на графике Engine
   if (ENG) {
@@ -2564,6 +2572,6 @@ requestAnimationFrame(tick);
   };
 })();
 </script>
-<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-16 22:07</p>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-16 22:18</p>
 </body>
 </html>
