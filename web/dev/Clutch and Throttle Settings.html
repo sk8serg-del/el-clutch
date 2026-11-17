@@ -204,7 +204,7 @@
     <button id="connectBleButton">Connect</button>
     <button id="disconnectBleButton">Disconnect</button>
   </div>
-  <p>State: <strong><span id="bleState" style="color:#d13a30;">Disconnected</span></strong></p>
+  <p>State: <strong><span id="bleState" style="color:#d13a30;">Disconnected</span></strong> <span id="bleLag" style="font-size:12px; color:#888;"></span></p>
 
   <!-- Что подключено: заполняется после подключения -->
   <div class="card" id="deviceCard" style="display:none; font-size:14px;">
@@ -1439,9 +1439,60 @@ function fwCheckWithConfirm(bytes, board, options) {
   bindCmd('saveReleasedButtonA1','Fully Released A1');
 
   // ── Сенсор notify ──
+  // Данные с платы: каждое уведомление сразу идёт в модель и Live Plot (дёшево),
+  // а экран (цифры, заливки, измерители) перерисовывается раз за кадр по последнему
+  // пришедшему значению — так отставание не копится, даже если телефон не успевает.
+  let sensorLatest = null, sensorRaf = 0;
+  const LAG = { minOff: Infinity, overSince: 0, lastFix: 0, shownAt: 0 };
+  function resetLag() { LAG.minOff = Infinity; LAG.overSince = 0; document.getElementById('bleLag').textContent = ''; }
+
+  // 14-е поле (2.16.12+) — millis() платы. Минимум (приход − время платы) = чистая
+  // задержка радио; всё, что сверху, — очередь. Растёт > 0,5 с дольше секунды —
+  // просим плату ускорить связь (CONNFAST), не чаще раза в 10 с.
+  function measureLag(boardMs) {
+    if (!isFinite(boardMs)) return;
+    const now = performance.now(), off = now - boardMs;
+    if (off < LAG.minOff) LAG.minOff = off;
+    const lag = off - LAG.minOff;
+    if (lag > 500) {
+      if (!LAG.overSince) LAG.overSince = now;
+      if (now - LAG.overSince > 1000 && now - LAG.lastFix > 10000 && charCommand) {
+        LAG.lastFix = now; LAG.overSince = 0;
+        console.warn('BLE lag', Math.round(lag), 'ms — CONNFAST');
+        q.run(() => charCommand.writeValue(new TextEncoder().encode('CONNFAST'))).catch(() => {});
+      }
+    } else LAG.overSince = 0;
+    if (now - LAG.shownAt > 500) {
+      LAG.shownAt = now;
+      const el = document.getElementById('bleLag');
+      el.textContent = '· lag ' + Math.round(lag) + ' ms';
+      el.style.color = lag > 300 ? '#d13a30' : '#888';
+    }
+  }
+
   function onSensorData(e) {
     const parts = new TextDecoder().decode(e.target.value).split(',');
     if (parts.length < 6) return;
+    if (parts.length > 13) measureLag(parseFloat(parts[13]));
+    // Предпросмотр: рычаг и газ с платы — в модель (обороты, звук, точка на графике Engine)
+    {
+      const curA0 = parseFloat(parts[0]), curA1 = parseFloat(parts[3]);
+      const prs0 = parseFloat(parts[1]), rel0 = parseFloat(parts[2]);
+      const prs1 = parseFloat(parts[4]), rel1 = parseFloat(parts[5]);
+      const lever = prs0 !== rel0 ? (curA0 - rel0) / (prs0 - rel0) * 100 : 0;
+      const gas = prs1 !== rel1 ? (curA1 - rel1) / (prs1 - rel1) * 100 : 0;
+      if (window.pvFeed) window.pvFeed(lever, gas, parts.length > 8 ? parseFloat(parts[8]) : null);
+      if (window.livePlotFeed) window.livePlotFeed(lever, gas, parseFloat(parts[6]), parts.length > 7 ? parseFloat(parts[7]) : 0,
+                                                 parts.length > 12 ? parseFloat(parts[12]) : NaN);
+    }
+    sensorLatest = parts;
+    if (!sensorRaf) sensorRaf = requestAnimationFrame(() => {
+      sensorRaf = 0;
+      if (sensorLatest) renderSensor(sensorLatest);
+    });
+  }
+
+  function renderSensor(parts) {
     updateArbVisibility(parts);
     // Расчётное напряжение на контроллер (13-й элемент, прошивка 2.14.1+)
     if (parts.length > 12) {
@@ -1459,16 +1510,6 @@ function fwCheckWithConfirm(bytes, board, options) {
     document.getElementById('fullyReleasedValueA0').textContent = parts[2];
     document.getElementById('fullyPressedValueA1').textContent  = prsA1;
     document.getElementById('fullyReleasedValueA1').textContent = relA1;
-
-    // Предпросмотр: рычаг и газ с платы — в модель (обороты, звук, точка на графике Engine)
-    {
-      const prs0 = parseFloat(parts[1]), rel0 = parseFloat(parts[2]);
-      const lever = prs0 !== rel0 ? (curA0 - rel0) / (prs0 - rel0) * 100 : 0;
-      const gas = prsA1 !== relA1 ? (curA1 - relA1) / (prsA1 - relA1) * 100 : 0;
-      if (window.pvFeed) window.pvFeed(lever, gas, parts.length > 8 ? parseFloat(parts[8]) : null);
-      if (window.livePlotFeed) window.livePlotFeed(lever, gas, parseFloat(parts[6]), parts.length > 7 ? parseFloat(parts[7]) : 0,
-                                                 parts.length > 12 ? parseFloat(parts[12]) : NaN);
-    }
 
     // Отклик газа (9–11-й элементы, прошивка 2.11.0+): скорость ручки, обороты колеса, кривая
     if (parts.length > 10) {
@@ -1495,8 +1536,9 @@ function fwCheckWithConfirm(bytes, board, options) {
     // рисуем оба полигона на одном canvas
     const oc = document.getElementById('clutchOverlayCanvas');
     const chartCanvas = document.getElementById('chartJSContainer');
-    oc.width  = chartCanvas.offsetWidth;
-    oc.height = chartCanvas.offsetHeight;
+    // размер меняем только если изменился: присваивание width всегда пересоздаёт холст
+    if (oc.width !== chartCanvas.offsetWidth)   oc.width  = chartCanvas.offsetWidth;
+    if (oc.height !== chartCanvas.offsetHeight) oc.height = chartCanvas.offsetHeight;
     const octx = oc.getContext('2d');
     octx.clearRect(0, 0, oc.width, oc.height);
 
@@ -2002,6 +2044,7 @@ function fwCheckWithConfirm(bytes, board, options) {
   let connectError = null;
   function resetBleState() {
     if (otaReloadOnDisconnect) { otaReloadPage(); return; }
+    resetLag(); sensorLatest = null;
     if (gainNode && audioCtx) gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
     document.getElementById('bleState').textContent = connectError ? 'Connection failed, try again' : 'Disconnected';
     document.getElementById('bleState').style.color = '#d13a30';
@@ -2148,6 +2191,7 @@ function fwCheckWithConfirm(bytes, board, options) {
       document.getElementById('fwVersionSpan').textContent = fwVersion || '—';
       try { showDeviceInfo(hwLabel, fwVersion); } catch(e) { console.error('device info', e); }
 
+      resetLag();
       charSensor.addEventListener('characteristicvaluechanged', onSensorData);
       try { await q.run(() => charSensor.startNotifications()); } catch(e) { console.error('sensor notify', e); }
 
@@ -2635,6 +2679,6 @@ requestAnimationFrame(tick);
   };
 })();
 </script>
-<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-17 17:28</p>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-17 17:33</p>
 </body>
 </html>
