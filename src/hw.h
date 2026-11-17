@@ -13,6 +13,7 @@
   // Фильтры и цикл как на S3, чтобы разница была только в чипе.
   #define HW_IS_CLUTCH_CAN 1
   #define HW_BOARD "GEN2"
+  #define HW_BOARD_LEGACY "CLUTCH_CAN"   // имя до 2.16.13: BLE OTA принимает и его
   #define HW_CHIP  "C3"
   static const float FILTER_CLUTCH   = 0.2f;
   static const float FILTER_GAS_FAST = 0.2f;
@@ -26,6 +27,7 @@
 #elif defined(CONFIG_IDF_TARGET_ESP32C3)
   #define HW_IS_CLUTCH_CAN 0
   #define HW_BOARD "GEN1"
+  #define HW_BOARD_LEGACY "CLUTCH"       // имя до 2.16.13: BLE OTA принимает и его
   #define HW_CHIP  "C3"
   // Коэффициенты за проход, как на S3 (проход C3 с усреднением АЦП ~4,8 мс, S3 ~5,7 мс)
   static const float FILTER_CLUTCH   = 0.2f;
@@ -41,6 +43,7 @@
 #elif defined(CONFIG_IDF_TARGET_ESP32S3)
   #define HW_IS_CLUTCH_CAN 1
   #define HW_BOARD "GEN2"
+  #define HW_BOARD_LEGACY "CLUTCH_CAN"   // имя до 2.16.13: BLE OTA принимает и его
   #define HW_CHIP  "S3"
   static const float FILTER_CLUTCH   = 0.2f;
   static const float FILTER_GAS_FAST = 0.2f;

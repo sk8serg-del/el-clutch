@@ -23,7 +23,7 @@
 #include <soc/soc.h>
 #include <soc/rtc_cntl_reg.h>
 
-#define FW_VERSION_BASE "2.16.13"
+#define FW_VERSION_BASE "2.16.14"
 
 // ── Диагностика зависаний: "хлебные крошки" ──────────────────────────────
 // RTC_NOINIT_ATTR переживает программный ребут (watchdog/паника/сам ESP.restart),
@@ -44,7 +44,6 @@ RTC_NOINIT_ATTR uint32_t crashBreadcrumb;
 // Начало метки встречается в образе только здесь, отдельной строкой его не заводить.
 static const char FW_ID[] = "STARKFWID|" HW_BOARD "|" HW_CHIP "|" FW_VERSION_BASE "|";
 #define FW_ID_PREFIX_LEN 10                             // "STARKFWID|"
-#define FW_ID_MATCH_LEN  (FW_ID_PREFIX_LEN + sizeof(HW_BOARD))  // префикс + плата + '|'
 
 // ── RPM/передача — теперь приходят только по ESP-NOW от LVGLAMOLED,
 //    CAN-трансивер на этой плате физически отключён ──────────────────────────
@@ -1043,10 +1042,17 @@ static void otaAbort() {
 // Образ для другого железа не должен стать активным: сам Update проверяет только
 // первый байт файла. Чип записан в заголовке образа, плата — в метке FW_ID. Старые
 // файлы без метки пропускаются, их проверяет страница.
+// С 2.16.14 метка читается целиком: подходит своя (GEN1/GEN2) и старое имя того же
+// поколения (CLUTCH/CLUTCH_CAN, прошивки до 2.16.13) — можно откатиться по BLE.
+// Чужое поколение не принимается никогда: другой ЦАП, это газ.
 static bool     otaWrongHw   = false;
 static uint8_t  otaHdr[14];
 static uint8_t  otaHdrLen    = 0;
-static uint8_t  otaIdPos     = 0;
+static uint8_t  otaIdPos     = 0;        // совпавших байт префикса "STARKFWID|"
+static char     otaIdLabel[16];          // метка платы из файла, до следующего '|'
+static uint8_t  otaIdLabelLen = 0;
+static bool     otaIdDone    = false;    // метка найдена и проверена
+static void otaIdReset() { otaHdrLen = 0; otaIdPos = 0; otaIdLabelLen = 0; otaIdDone = false; }
 static bool otaImageFits(const uint8_t* data, size_t len) {
   if (otaHdrLen < sizeof(otaHdr)) {
     size_t n = min(len, sizeof(otaHdr) - otaHdrLen);
@@ -1055,10 +1061,26 @@ static bool otaImageFits(const uint8_t* data, size_t len) {
     if (otaHdrLen == sizeof(otaHdr) &&
         ((uint16_t)otaHdr[12] | ((uint16_t)otaHdr[13] << 8)) != CONFIG_IDF_FIRMWARE_CHIP_ID) return false;
   }
-  for (size_t i = 0; i < len && otaIdPos < FW_ID_MATCH_LEN; i++) {
-    if (data[i] == (uint8_t)FW_ID[otaIdPos]) otaIdPos++;
-    else if (otaIdPos >= FW_ID_PREFIX_LEN) return false;  // метка есть, но плата другая
-    else otaIdPos = (data[i] == (uint8_t)FW_ID[0]) ? 1 : 0;
+  for (size_t i = 0; i < len && !otaIdDone; i++) {
+    char c = (char)data[i];
+    if (otaIdPos < FW_ID_PREFIX_LEN) {               // ищем префикс
+      if (c == FW_ID[otaIdPos]) otaIdPos++;
+      else otaIdPos = (c == FW_ID[0]) ? 1 : 0;
+      continue;
+    }
+    if (c == '|') {                                  // метка целиком
+      otaIdLabel[otaIdLabelLen] = '\0';
+      otaIdDone = true;
+      if (strcmp(otaIdLabel, HW_BOARD) != 0 && strcmp(otaIdLabel, HW_BOARD_LEGACY) != 0)
+        return false;                                // метка есть, но плата другая
+      continue;
+    }
+    if (otaIdLabelLen >= sizeof(otaIdLabel) - 1 || !(isalnum((unsigned char)c) || c == '_')) {
+      otaIdPos = (c == FW_ID[0]) ? 1 : 0;            // не метка — ищем префикс дальше
+      otaIdLabelLen = 0;
+      continue;
+    }
+    otaIdLabel[otaIdLabelLen++] = c;
   }
   return true;
 }
@@ -1381,8 +1403,7 @@ class OtaCtrlCallbacks : public BLECharacteristicCallbacks {
       otaFreeZ();
       otaExpectedSize = (size_t)atoi(val.c_str() + (zMode ? 6 : 5));
       otaWrongHw = false;
-      otaHdrLen = 0;
-      otaIdPos = 0;
+      otaIdReset();
       otaRxBytes = 0; otaOutBytes = 0;
       if (zMode) {
         otaInfl = (tinfl_decompressor*)malloc(sizeof(tinfl_decompressor));

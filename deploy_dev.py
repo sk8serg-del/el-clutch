@@ -64,6 +64,11 @@ for page, src in PAGES.items():
     if page == "index.html":
         at = html.rindex("  </div>")
         html = html[:at] + DEV_LINKS + html[at:]
+    # Режим разработчика: файлы прошивок в корне сайта, проверки страницы обходятся
+    # подтверждением (плата по BLE всё равно проверяет чип и метку сама)
+    if page in ("Clutch and Throttle Settings.html", "flash.html"):
+        at = html.index("<head>") + len("<head>")
+        html = html[:at] + "\n<script>window.FW_DEV = true; window.FW_BASE = '../';</script>" + html[at:]
     at = html.rindex("</body>")
     with open(os.path.join(dev_dir, page), "w", encoding="utf-8", newline="") as f:
         f.write(html[:at] + footer + html[at + len("</body>"):])

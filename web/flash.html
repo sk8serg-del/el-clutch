@@ -93,6 +93,11 @@ const FW_CHIP_IDS = { C3: 0x0005, S3: 0x0009 };           // поле chip_id в
 // поэтому на новую прошивку её один раз прошивают по USB.
 const FW_LEGACY_HW = { CLUTCH: 'GEN1', CLUTCH_CAN: 'GEN2' };
 const FW_NEW_LABELS_FROM = '2.16.13';
+// dev-копия (tools.bulbaracing.com/dev/, вставляет deploy_dev.py): файлы прошивок лежат
+// уровнем выше, проверки страницы можно обойти подтверждением. Плата по BLE всё равно
+// проверяет чип и метку сама; по USB проверок на плате нет.
+const FW_DEV  = !!window.FW_DEV;
+const FW_BASE = window.FW_BASE || '';
 
 function fwNormHw(hw) { return hw ? (FW_LEGACY_HW[hw] || hw) : null; }
 function fwBoardKey(hw, chip) {
@@ -166,8 +171,10 @@ function fwInspect(bytes) {
 
 // Бросает с понятным сообщением, если файл нельзя шить на эту плату.
 // trustedRelease: файл из своих релизов (имя файла уже = плата).
-// ble: запись по Bluetooth — плата сама сверит метку, старую (CLUTCH…) не примет.
-function fwAssertFits(bytes, board, { trustedRelease = false, ble = false } = {}) {
+// ble: запись по Bluetooth — плата сама сверит метку. Старое имя своего поколения
+// (CLUTCH / CLUTCH_CAN) плата принимает с 2.16.14 (deviceVersion — версия на плате).
+const FW_LEGACY_ALIAS_FROM = '2.16.14';
+function fwAssertFits(bytes, board, { trustedRelease = false, ble = false, deviceVersion = null } = {}) {
   const target = FW_BOARDS[board];
   if (!target) throw new Error('Cannot determine the connected board, flashing is blocked');
   const info = fwInspect(bytes);
@@ -175,8 +182,10 @@ function fwAssertFits(bytes, board, { trustedRelease = false, ble = false } = {}
     throw new Error(`Wrong firmware: this file is for ${info.chip ? 'ESP32-' + info.chip : 'another chip'}, connected board is ${target.title}`);
   if (info.hw && info.hw !== target.hw)
     throw new Error(`Wrong firmware: this file is for ${info.hw} hardware, connected board is ${target.title}`);
-  if (ble && info.rawHw && info.rawHw !== target.hw)
-    throw new Error(`Firmware ${info.version || ''} is older than ${FW_NEW_LABELS_FROM}: it can be flashed only over USB`);
+  if (ble && info.rawHw && info.rawHw !== target.hw &&
+      !(deviceVersion && fwVersionAtLeast(deviceVersion, FW_LEGACY_ALIAS_FROM)))
+    throw new Error(`Firmware ${info.version || ''} is older than ${FW_NEW_LABELS_FROM}: this board accepts it only over USB ` +
+                    `(over Bluetooth from firmware ${FW_LEGACY_ALIAS_FROM} on the board)`);
   if (!info.hw && !trustedRelease) {
     const e = new Error(`This old firmware file does not say which hardware it is for (this board is ${target.title})`);
     e.unknownHardware = true;  // чип совпал, железо неизвестно: решает пользователь
@@ -192,6 +201,13 @@ function fwCheckWithConfirm(bytes, board, options) {
     return fwAssertFits(bytes, board, options);
   } catch(e) {
     const target = FW_BOARDS[board];
+    // dev: любое несовпадение, кроме чипа (другой чип не загрузится вообще), — на усмотрение
+    if (FW_DEV && target && !/is for (ESP32-|another chip)/.test(e.message)) {
+      if (confirm(`DEV: ${e.message}.\n\n` + (options && options.ble
+          ? 'Over Bluetooth the board itself still refuses another hardware label.\n\n' : '') +
+          'Flash anyway?')) return fwInspect(bytes);
+      throw e;
+    }
     const ok = e.unknownHardware && confirm(
       `This old firmware file does not say which hardware it is for.\n` +
       `Connected board: ${target.title} (${target.parts}).\n\n` +
@@ -226,7 +242,7 @@ function fwFillBoardSelect(sel) {
   let latestVersion = '';
   fwFillBoardSelect(document.getElementById('boardSel'));
 
-  fetch('firmware_version.txt?_=' + Date.now())
+  fetch(FW_BASE + 'firmware_version.txt?_=' + Date.now())
     .then(r => r.ok ? r.text() : '')
     .then(t => {
       // Показываем только номер версии: вместо файла может прийти страница ошибки
@@ -359,7 +375,7 @@ function fwFillBoardSelect(sel) {
       const status = document.getElementById('statusMsg');
       await doFlash(async (board) => {
         status.textContent = 'Downloading firmware...';
-        const resp = await fetch(FW_BOARDS[board].file + '?_=' + Date.now());
+        const resp = await fetch(FW_BASE + FW_BOARDS[board].file + '?_=' + Date.now());
         if (!resp.ok) throw new Error('Download failed: ' + resp.status);
         const data = new Uint8Array(await resp.arrayBuffer());
         status.textContent = `Downloaded ${(data.byteLength / 1024).toFixed(0)} KB`;
