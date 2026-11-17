@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<script>window.FW_DEV = true; window.FW_BASE = '../';</script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Stark Clutch — Flash Tool</title>
@@ -46,6 +47,7 @@
   <div class="card">
     <p class="version-line">Latest: <b id="latestVer">loading...</b></p>
     <p class="version-line">Board: <b id="boardInfo" style="color:#555;">detected when you connect</b></p>
+    <select id="boardSel" style="width:100%; padding:8px; font-size:14px; border-radius:6px; border:1px solid #ccc; margin-bottom:14px; box-sizing:border-box;"></select>
 
     <div class="checkbox-row">
       <input type="checkbox" id="eraseNvsCheck">
@@ -79,21 +81,40 @@
 <script>
 // Страница должна работать одним файлом (например, открытая с Google Drive на телефоне),
 // поэтому проверка встроена. Такая же копия есть в соседней странице — менять вместе.
-// Какая прошивка подходит какой плате. Плата определяет железо, других сочетаний нет.
-// minRelease: релизы с firmware_s3.bin до этой версии собраны для другого железа.
+// Прошивка = поколение платы + чип (с 2.16.13). Поколение — метка железа в прошивке
+// (характеристика 19b10051, метка STARKFWID в .bin). Новое поколение или новый чип —
+// одна строка здесь, сборка в platformio.ini и файл в .github/workflows/build.yml.
 const FW_BOARDS = {
-  C3: { hw: 'CLUTCH',     title: 'XIAO ESP32-C3', parts: 'ESP32 ADC + MCP4725', chipId: 0x0005, file: 'firmware_c3.bin', minRelease: null },
-  S3: { hw: 'CLUTCH_CAN', title: 'XIAO ESP32-S3', parts: 'ADS1115 + MCP4728',   chipId: 0x0009, file: 'firmware_s3.bin', minRelease: '2.15.0' },
+  GEN1_C3: { hw: 'GEN1', chip: 'C3', title: 'Gen 1 · XIAO ESP32-C3', parts: 'ESP32 ADC + MCP4725', file: 'GEN1_C3.bin' },
+  GEN2_S3: { hw: 'GEN2', chip: 'S3', title: 'Gen 2 · XIAO ESP32-S3', parts: 'ADS1115 + MCP4728',   file: 'GEN2_S3.bin' },
+  GEN2_C3: { hw: 'GEN2', chip: 'C3', title: 'Gen 2 · XIAO ESP32-C3', parts: 'ADS1115 + MCP4728',   file: 'GEN2_C3.bin' },
 };
+const FW_CHIP_IDS = { C3: 0x0005, S3: 0x0009 };           // поле chip_id в заголовке образа
+// Метки прошивок до 2.16.13. Такая плата по BLE примет только файл со старой меткой,
+// поэтому на новую прошивку её один раз прошивают по USB.
+const FW_LEGACY_HW = { CLUTCH: 'GEN1', CLUTCH_CAN: 'GEN2' };
+const FW_NEW_LABELS_FROM = '2.16.13';
+// dev-копия (tools.bulbaracing.com/dev/, вставляет deploy_dev.py): файлы прошивок лежат
+// уровнем выше, проверки страницы можно обойти подтверждением. Плата по BLE всё равно
+// проверяет чип и метку сама; по USB проверок на плате нет.
+const FW_DEV  = !!window.FW_DEV;
+const FW_BASE = window.FW_BASE || '';
 
-// Строка версии прошивки: "2.15.0-S3"
-function fwBoardFromVersion(version) {
+function fwNormHw(hw) { return hw ? (FW_LEGACY_HW[hw] || hw) : null; }
+function fwBoardKey(hw, chip) {
+  const k = fwNormHw(hw) + '_' + chip;
+  return FW_BOARDS[k] ? k : null;
+}
+function fwBoardsForChip(chip) { return Object.keys(FW_BOARDS).filter(k => FW_BOARDS[k].chip === chip); }
+
+// Строка версии прошивки: "2.15.0-S3" → чип
+function fwChipFromVersion(version) {
   const m = /-([CS]3)$/.exec((version || '').trim());
   return m ? m[1] : null;
 }
 
 // Название чипа от esptool: "ESP32-S3 (revision v0.2)"
-function fwBoardFromChipName(name) {
+function fwChipFromChipName(name) {
   const m = /ESP32-([CS]3)/i.exec(name || '');
   return m ? m[1].toUpperCase() : null;
 }
@@ -123,7 +144,8 @@ function fwEta(now = () => Date.now()) {
   };
 }
 
-// Что внутри .bin: { board, hw, version }, null — неизвестно. Бросает, если это не образ приложения.
+// Что внутри .bin: { chip, hw, rawHw, version, board }; hw — поколение (GEN1/GEN2),
+// rawHw — метка как записана в файле. null — неизвестно. Бросает, если это не образ приложения.
 function fwInspect(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   // Заголовок образа ESP32 и описание приложения за ним. Полный образ из нескольких
@@ -132,37 +154,37 @@ function fwInspect(bytes) {
     throw new Error('This is not an application firmware file');
 
   const chipId = view.getUint16(12, true);
-  const board = Object.keys(FW_BOARDS).find(k => FW_BOARDS[k].chipId === chipId) || null;
-
+  const chip = Object.keys(FW_CHIP_IDS).find(c => FW_CHIP_IDS[c] === chipId) || null;
   const text = new TextDecoder('latin1').decode(bytes);
+  let rawHw = null, version = null;
   const id = /STARKFWID\|(\w+)\|([CS]3)\|([\d.]+)\|/.exec(text);
-  if (id) return { board, hw: id[1], version: id[3] };
-
-  // Прошивки до 2.15.0: явного идентификатора нет, но железо видно по строкам
-  let hw = null;
-  if (text.includes('\0CLUTCH_CAN\0') || text.includes('adsErr=')) hw = 'CLUTCH_CAN';
-  else if (text.includes('\0CLUTCH\0')) hw = 'CLUTCH';
-  const ver = /(\d+\.\d+\.\d+)-[CS]3/.exec(text);
-  return { board, hw, version: ver ? ver[1] : null };
+  if (id) { rawHw = id[1]; version = id[3]; }
+  else {
+    // Прошивки до 2.15.0: явного идентификатора нет, но железо видно по строкам
+    if (text.includes('\0CLUTCH_CAN\0') || text.includes('adsErr=')) rawHw = 'CLUTCH_CAN';
+    else if (text.includes('\0CLUTCH\0')) rawHw = 'CLUTCH';
+    const ver = /(\d+\.\d+\.\d+)-[CS]3/.exec(text);
+    version = ver ? ver[1] : null;
+  }
+  const hw = fwNormHw(rawHw);
+  return { chip, hw, rawHw, version, board: hw && chip ? fwBoardKey(hw, chip) : null };
 }
 
 // Бросает с понятным сообщением, если файл нельзя шить на эту плату.
-// trustedRelease: файл из своих релизов, а там под C3 всегда был только CLUTCH.
-function fwAssertFits(bytes, board, { trustedRelease = false } = {}) {
+// trustedRelease: файл из своих релизов (имя файла уже = плата).
+// ble: запись по Bluetooth — плата сама сверит метку, старую (CLUTCH…) не примет.
+function fwAssertFits(bytes, board, { trustedRelease = false, ble = false } = {}) {
   const target = FW_BOARDS[board];
   if (!target) throw new Error('Cannot determine the connected board, flashing is blocked');
   const info = fwInspect(bytes);
-  if (info.board !== board) {
-    const other = FW_BOARDS[info.board];
-    throw new Error(`Wrong firmware: this file is for ${other ? other.title : 'another chip'}, connected board is ${target.title}`);
-  }
+  if (info.chip !== target.chip)
+    throw new Error(`Wrong firmware: this file is for ${info.chip ? 'ESP32-' + info.chip : 'another chip'}, connected board is ${target.title}`);
   if (info.hw && info.hw !== target.hw)
-    throw new Error(`Wrong firmware: this file is for ${info.hw} hardware, connected board is ${target.hw}`);
-  // Релизы под S3 до minRelease собраны для другого железа, метки в них может не быть
-  if (trustedRelease && target.minRelease && !(info.version && fwVersionAtLeast(info.version, target.minRelease)))
-    throw new Error(`Firmware ${info.version || ''} from the site is not for ${target.hw} hardware`);
+    throw new Error(`Wrong firmware: this file is for ${info.hw} hardware, connected board is ${target.title}`);
+  if (ble && info.rawHw && info.rawHw !== target.hw)
+    throw new Error(`Firmware ${info.version || ''} is older than ${FW_NEW_LABELS_FROM}: it can be flashed only over USB`);
   if (!info.hw && !trustedRelease) {
-    const e = new Error(`This old firmware file does not say which hardware it is for (this board needs ${target.hw})`);
+    const e = new Error(`This old firmware file does not say which hardware it is for (this board is ${target.title})`);
     e.unknownHardware = true;  // чип совпал, железо неизвестно: решает пользователь
     throw e;
   }
@@ -176,19 +198,48 @@ function fwCheckWithConfirm(bytes, board, options) {
     return fwAssertFits(bytes, board, options);
   } catch(e) {
     const target = FW_BOARDS[board];
+    // dev: любое несовпадение, кроме чипа (другой чип не загрузится вообще), — на усмотрение
+    if (FW_DEV && target && !/is for (ESP32-|another chip)/.test(e.message)) {
+      if (confirm(`DEV: ${e.message}.\n\n` + (options && options.ble
+          ? 'Over Bluetooth the board itself still refuses another hardware label.\n\n' : '') +
+          'Flash anyway?')) return fwInspect(bytes);
+      throw e;
+    }
     const ok = e.unknownHardware && confirm(
       `This old firmware file does not say which hardware it is for.\n` +
-      `Connected board: ${target.title}, needs ${target.hw} (${target.parts}).\n\n` +
-      `Flash only if you are sure this file is for ${target.hw}. Press OK to flash.`);
+      `Connected board: ${target.title} (${target.parts}).\n\n` +
+      `Flash only if you are sure this file is for this board. Press OK to flash.`);
     if (!ok) throw e;
     return fwInspect(bytes);
   }
 }
+
+// USB: чип известен точно, а поколение — нет (C3 стоит и на Gen 1, и на Gen 2).
+// Если на этом чипе бывает несколько плат, пользователь выбирает плату сам:
+// прошивка от другого поколения пишет в чужой ЦАП, угадывать по файлу нельзя.
+function fwUsbBoard(chip, selectedKey) {
+  const keys = fwBoardsForChip(chip);
+  if (!keys.length) throw new Error(`ESP32-${chip || '?'} is not a supported board`);
+  if (selectedKey) {
+    if (!FW_BOARDS[selectedKey] || FW_BOARDS[selectedKey].chip !== chip)
+      throw new Error(`Selected board is ${FW_BOARDS[selectedKey] ? FW_BOARDS[selectedKey].title : selectedKey}, but the connected chip is ESP32-${chip}`);
+    return selectedKey;
+  }
+  if (keys.length === 1) return keys[0];
+  throw new Error(`ESP32-${chip} is used on ${keys.map(k => FW_BOARDS[k].title.split(' · ')[0]).join(' and ')} boards: choose your board above and try again`);
+}
+
+// Выпадающий список плат для USB: «Auto» + все платы
+function fwFillBoardSelect(sel) {
+  sel.innerHTML = '<option value="">Board: detect by chip</option>' +
+    Object.keys(FW_BOARDS).map(k => `<option value="${k}">${FW_BOARDS[k].title} (${FW_BOARDS[k].parts})</option>`).join('');
+}
 </script>
 <script>
   let latestVersion = '';
+  fwFillBoardSelect(document.getElementById('boardSel'));
 
-  fetch('firmware_version.txt?_=' + Date.now())
+  fetch(FW_BASE + 'firmware_version.txt?_=' + Date.now())
     .then(r => r.ok ? r.text() : '')
     .then(t => {
       // Показываем только номер версии: вместо файла может прийти страница ошибки
@@ -249,10 +300,11 @@ function fwCheckWithConfirm(bytes, board, options) {
 
     let firmwareData;
     try {
-      const board = fwBoardFromChipName(chip);
-      if (!board) throw new Error(`${chip} is not a supported board`);
+      // C3 стоит и на Gen 1, и на Gen 2: тогда плату выбирает пользователь (список выше
+      // или «Read Version from Device»), по одному чипу её не отличить
+      const board = fwUsbBoard(fwChipFromChipName(chip), document.getElementById('boardSel').value);
       const target = FW_BOARDS[board];
-      document.getElementById('boardInfo').textContent = `${target.title} · ${target.hw} (${target.parts})`;
+      document.getElementById('boardInfo').textContent = `${target.title} (${target.parts})`;
       firmwareData = await getFirmware(board);
       const info = fwCheckWithConfirm(firmwareData, board, checkOptions);
       status.textContent = `${info.hw || 'Hardware not confirmed'} ${info.version || ''} — writing to ${target.title}`;
@@ -320,7 +372,7 @@ function fwCheckWithConfirm(bytes, board, options) {
       const status = document.getElementById('statusMsg');
       await doFlash(async (board) => {
         status.textContent = 'Downloading firmware...';
-        const resp = await fetch(FW_BOARDS[board].file + '?_=' + Date.now());
+        const resp = await fetch(FW_BASE + FW_BOARDS[board].file + '?_=' + Date.now());
         if (!resp.ok) throw new Error('Download failed: ' + resp.status);
         const data = new Uint8Array(await resp.arrayBuffer());
         status.textContent = `Downloaded ${(data.byteLength / 1024).toFixed(0)} KB`;
@@ -368,13 +420,15 @@ function fwCheckWithConfirm(bytes, board, options) {
         if (done) break;
         buf += textDecoder.decode(value, { stream: true });
 
-        // с 2.13.0 в начале загрузки: [BOOT] board=CLUTCH_CAN fw=2.15.0-S3
+        // с 2.13.0 в начале загрузки: [BOOT] board=GEN2 fw=2.16.13-S3 (до 2.16.13 — CLUTCH / CLUTCH_CAN)
         const bootMatch = buf.match(/\[BOOT\] board=(\w+) fw=([\w.\-]+)/);
         if (bootMatch) {
-          const target = FW_BOARDS[fwBoardFromVersion(bootMatch[2])];
+          const key = fwBoardKey(bootMatch[1], fwChipFromVersion(bootMatch[2]));
+          const target = FW_BOARDS[key];
           clearTimeout(timeout);
           out.textContent = `Board: ${target ? target.title : 'unknown'}\nHardware: ${bootMatch[1]}\nFirmware: ${bootMatch[2]}`;
-          document.getElementById('boardInfo').textContent = target ? `${target.title} · ${bootMatch[1]}` : bootMatch[1];
+          document.getElementById('boardInfo').textContent = target ? `${target.title} (${target.parts})` : bootMatch[1];
+          if (key) document.getElementById('boardSel').value = key;   // для «Flash» ниже
           break;
         }
 
@@ -400,6 +454,6 @@ function fwCheckWithConfirm(bytes, board, options) {
     }
   });
 </script>
-<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-14 16:21</p>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-17 18:10</p>
 </body>
 </html>
