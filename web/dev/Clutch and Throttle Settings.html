@@ -2425,14 +2425,12 @@ function drawEngine(p) {
     const d0 = revs[iB - 1] - out[iB - 1], d1 = revs[iB] - out[iB], k = d0 / (d0 - d1 || 1);
     pB = Object.assign(pB, { x: xs[iB - 1] + k * (xs[iB] - xs[iB - 1]), y: revs[iB - 1] + k * (revs[iB] - revs[iB - 1]) });
   }
-  const letters = [L(iA, 'A', { dx: -9, dy: 4 }), pB, L(iC, 'C', { dx: -6 }),
-                   ...(xs[iD] - xs[iC] > 0.03 ? [L(iD, 'D', { dx: 6 })] : []), L(iE, 'E', { dx: 8, dy: -6 })];
   const snapData = xs.map((x, i) => ({ x, y: out[i] })).filter((pt, i) => out[i] !== null || out[i - 1] !== null || out[i + 1] !== null);
   setChart(chEng, { x0: 0, x1: T, xFmt: sec, yFmt: noY, datasets: [
     ds('Engine revs, under load', xs, load, C_.purple, dashed),
     ds('Engine revs, no load', xs, revs, C_.orange, { fill: 'origin', backgroundColor: alpha(C_.orange, 0.2), borderWidth: 2.5 }),
     Object.assign(ds('Snap boost', [], [], C_.teal), { data: snapData, borderWidth: 2.5, fill: { target: 1, above: alpha(C_.teal, 0.35), below: 'transparent' }, spanGaps: false })],
-    marks: [{ x: 0.4, text: 'rev' }, { x: REL_T0, text: 'dump' }, ...letters] });
+    marks: [{ x: REL_T0, text: 'boost' }] });   // буквы A–E и метка rev убраны с графика
   ENG = { xs, out, revs, xA: xs[iA], xB: pB.x, xD: REL_T0 + relS, xE: xs[iE], marks: chEng.options.plugins.pvMarks.items.slice() };
 }
 
@@ -2637,6 +2635,6 @@ requestAnimationFrame(tick);
   };
 })();
 </script>
-<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-17 10:56</p>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-17 17:28</p>
 </body>
 </html>
