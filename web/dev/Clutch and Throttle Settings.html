@@ -208,7 +208,7 @@
     <button id="connectBleButton">Connect</button>
     <button id="disconnectBleButton">Disconnect</button>
   </div>
-  <p>State: <strong><span id="bleState" style="color:#d13a30;">Disconnected</span></strong> <span id="bleLag" style="font-size:12px; color:#888;"></span></p>
+  <p>State: <strong><span id="bleState" style="color:#d13a30;">Disconnected</span></strong> <span id="bleLag" class="dev-only" style="font-size:12px; color:#888;"></span> <span id="updNote" style="font-size:13px;"></span></p>
 
   <!-- Что подключено: заполняется после подключения -->
   <div class="card dev-only" id="deviceCard" style="display:none; font-size:14px;">
@@ -245,7 +245,7 @@
         <canvas id="chartJSContainer"></canvas>
         <canvas id="clutchOverlayCanvas" style="position:absolute;top:0;left:0;pointer-events:none;z-index:20;"></canvas>
       </div>
-      <p id="outVoltageRow" style="display:none; margin:6px 0 0; font-size:16px;">Throttle output: <b id="outVoltage">—</b> mV</p>
+      <p id="outVoltageRow" class="dev-only" style="display:none; margin:6px 0 0; font-size:16px;">Throttle output: <b id="outVoltage">—</b> mV</p>
       <div class="connectionContainer" style="margin-top:10px;">
         <button id="saveDropdownValue">Save</button>
         <button id="loadDropdownValue">Load</button>
@@ -465,7 +465,7 @@
     <!-- Калибровка -->
     <div class="card">
       <h3>Clutch Calibration</h3>
-      <p class="dev-only" style="font-size:14px;">
+      <p style="font-size:14px;">
         Value: <span id="voltageContainerA0">-</span> &nbsp;|&nbsp;
         Pressed: <span id="fullyPressedValueA0">-</span> &nbsp;|&nbsp;
         Released: <span id="fullyReleasedValueA0">-</span>
@@ -473,12 +473,12 @@
       <div class="connectionContainer gcal-new" style="display:none;">
         <button id="gcalClutchBtn" style="background:#24af24;">Calibrate clutch</button>
       </div>
-      <div class="connectionContainer gcal-old">
+      <div class="connectionContainer gcal-old dev-only">
         <button id="savePressedButton">Save Clutch Pressed</button>
         <button id="saveReleasedButton">Save Clutch Released</button>
       </div>
       <h3 style="margin-top:16px;">Throttle Calibration</h3>
-      <p class="dev-only" style="font-size:14px;">
+      <p style="font-size:14px;">
         Value: <span id="voltageContainerA1">-</span> &nbsp;|&nbsp;
         Open: <span id="fullyPressedValueA1">-</span> &nbsp;|&nbsp;
         Closed: <span id="fullyReleasedValueA1">-</span>
@@ -486,7 +486,7 @@
       <div class="connectionContainer gcal-new" style="display:none;">
         <button id="gcalGasBtn" style="background:#24af24;">Calibrate throttle</button>
       </div>
-      <div class="connectionContainer gcal-old">
+      <div class="connectionContainer gcal-old dev-only">
         <button id="savePressedButtonA1">Save Throttle Open</button>
         <button id="saveReleasedButtonA1">Save Throttle Closed</button>
       </div>
@@ -550,8 +550,7 @@
     <div class="card">
       <h3>Firmware Update</h3>
       <p style="font-size:14px; margin:4px 0 8px;">
-        Board: <b id="hwBoardSpan">—</b>
-        &nbsp;&nbsp;Device: <b id="fwVersionSpan">—</b>
+        <span class="dev-only">Board: <b id="hwBoardSpan">—</b>&nbsp;&nbsp;</span>Firmware: <b id="fwVersionSpan">—</b>
       </p>
       <p style="font-size:14px; margin:0 0 8px;">Latest: <b id="ghVersionSpan" style="color:#888;">—</b></p>
       <div class="connectionContainer" style="margin-bottom:4px;">
@@ -1721,6 +1720,34 @@ function fwFillBoardSelect(sel) {
     return m ? m[1] : null;
   }
 
+  // При подключении: есть ли на GitHub версия новее, чем на плате (файл для этой платы).
+  // Пишем рядом с «State: Connected»; клик — к блоку обновления и сразу проверка.
+  async function checkUpdateOnConnect(version) {
+    const el = document.getElementById('updNote');
+    el.textContent = '';
+    const cur = fwDeviceVersion(version), target = FW_BOARDS[detectedBoard];
+    if (!cur || !target || flashBlocked) return;
+    try {
+      const rels = await fetchReleasesList();
+      const rel = rels.find(r => !r.draft && !r.prerelease && (r.assets || []).some(a => a.name === target.file));
+      if (!rel) return;
+      const ver = (rel.body || '').trim() || rel.tag_name.replace(/^v/, '');
+      if (!/^\d+\.\d+\.\d+$/.test(ver) || ver === cur || !fwVersionAtLeast(ver, cur)) return;
+      if (!(bleDevice && bleDevice.gatt.connected)) return;   // пока ждали ответ, плату отключили
+      el.innerHTML = '';
+      const a = document.createElement('a');
+      a.href = '#otaSection';
+      a.style.cssText = 'color:#e67e22; font-weight:bold;';
+      a.textContent = '· Update available: ' + ver;
+      a.addEventListener('click', ev => {
+        ev.preventDefault();
+        document.getElementById('otaSection').scrollIntoView({ behavior: 'smooth' });
+        document.getElementById('otaCheckBtn').click();
+      });
+      el.appendChild(a);
+    } catch (e) { console.warn('update check', e); }
+  }
+
   function fwReleasePath(board, selected) {
     const target = FW_BOARDS[board];
     if (!target) throw new Error('Unknown board');
@@ -2151,6 +2178,7 @@ function fwFillBoardSelect(sel) {
   let connectError = null;
   function resetBleState() {
     if (otaReloadOnDisconnect) { otaReloadPage(); return; }
+    document.getElementById('updNote').textContent = '';
     resetLag(); sensorLatest = null;
     if (gainNode && audioCtx) gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
     document.getElementById('bleState').textContent = connectError ? 'Connection failed, try again' : 'Disconnected';
@@ -2297,6 +2325,7 @@ function fwFillBoardSelect(sel) {
       document.getElementById('hwBoardSpan').textContent = hwLabel || 'unknown';
       document.getElementById('fwVersionSpan').textContent = fwVersion || '—';
       try { showDeviceInfo(hwLabel, fwVersion); } catch(e) { console.error('device info', e); }
+      checkUpdateOnConnect(fwVersion);
 
       resetLag();
       charSensor.addEventListener('characteristicvaluechanged', onSensorData);
@@ -2786,6 +2815,6 @@ requestAnimationFrame(tick);
   };
 })();
 </script>
-<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-17 18:57</p>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-17 19:39</p>
 </body>
 </html>
