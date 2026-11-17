@@ -672,10 +672,18 @@ function fwInspect(bytes) {
 
 // Бросает с понятным сообщением, если файл нельзя шить на эту плату.
 // trustedRelease: файл из своих релизов (имя файла уже = плата).
-// ble: запись по Bluetooth — плата сама сверит метку. Старое имя своего поколения
-// (CLUTCH / CLUTCH_CAN) плата принимает с 2.16.14 (deviceVersion — версия на плате).
+// ble: запись по Bluetooth — плата сама сверит метку файла со своей (deviceLabel):
+// до 2.16.14 — только точное совпадение, с 2.16.14 — любое имя своего поколения
+// (GEN1 = CLUTCH, GEN2 = CLUTCH_CAN). Плате со старой прошивкой нужен переходный
+// файл со старой меткой (firmware/CLUTCH_C3/CLUTCH_v2.16.14_C3.bin и т.п.).
 const FW_LEGACY_ALIAS_FROM = '2.16.14';
-function fwAssertFits(bytes, board, { trustedRelease = false, ble = false, deviceVersion = null } = {}) {
+function fwBleAccepts(fileLabel, deviceLabel, deviceVersion) {
+  if (!fileLabel || !deviceLabel) return true;   // без метки плата не проверяет
+  if (fileLabel === deviceLabel) return true;
+  return !!(deviceVersion && fwVersionAtLeast(deviceVersion, FW_LEGACY_ALIAS_FROM)
+            && fwNormHw(fileLabel) === fwNormHw(deviceLabel));
+}
+function fwAssertFits(bytes, board, { trustedRelease = false, ble = false, deviceVersion = null, deviceLabel = null } = {}) {
   const target = FW_BOARDS[board];
   if (!target) throw new Error('Cannot determine the connected board, flashing is blocked');
   const info = fwInspect(bytes);
@@ -683,10 +691,11 @@ function fwAssertFits(bytes, board, { trustedRelease = false, ble = false, devic
     throw new Error(`Wrong firmware: this file is for ${info.chip ? 'ESP32-' + info.chip : 'another chip'}, connected board is ${target.title}`);
   if (info.hw && info.hw !== target.hw)
     throw new Error(`Wrong firmware: this file is for ${info.hw} hardware, connected board is ${target.title}`);
-  if (ble && info.rawHw && info.rawHw !== target.hw &&
-      !(deviceVersion && fwVersionAtLeast(deviceVersion, FW_LEGACY_ALIAS_FROM)))
-    throw new Error(`Firmware ${info.version || ''} is older than ${FW_NEW_LABELS_FROM}: this board accepts it only over USB ` +
-                    `(over Bluetooth from firmware ${FW_LEGACY_ALIAS_FROM} on the board)`);
+  if (ble && !fwBleAccepts(info.rawHw, deviceLabel, deviceVersion))
+    throw new Error(`Over Bluetooth this board (firmware ${deviceVersion || '?'}, label ${deviceLabel}) accepts only ` +
+                    `${deviceLabel} files. ` + (FW_LEGACY_HW[deviceLabel]
+                      ? `Flash the transition firmware ${deviceLabel}_v${FW_LEGACY_ALIAS_FROM} first, or update over USB`
+                      : `Update it to ${FW_LEGACY_ALIAS_FROM} or newer first, or use USB`));
   if (!info.hw && !trustedRelease) {
     const e = new Error(`This old firmware file does not say which hardware it is for (this board is ${target.title})`);
     e.unknownHardware = true;  // чип совпал, железо неизвестно: решает пользователь
@@ -1664,18 +1673,22 @@ function fwFillBoardSelect(sel) {
   // Карточка устройства: плата = метка железа (19b10051) + чип из версии прошивки.
   // Старая прошивка может чего-то не сообщать: на подключение и настройки это не влияет,
   // запрещается только обновление по BLE.
+  let   deviceLabel   = null;  // метка, как её сообщила плата (GEN1, CLUTCH, …): по ней плата сверяет файл
   function showDeviceInfo(label, version) {
     const chip = fwChipFromVersion(version);
+    deviceLabel = label || null;
     detectedBoard = label && chip ? fwBoardKey(label, chip) : null;
     const target = FW_BOARDS[detectedBoard];
     flashBlocked = null;
+    let hint = '';
     if (!label || !chip) {
       flashBlocked = 'This firmware does not report its board. Update over USB with the Flash Tool.';
     } else if (!target) {
       flashBlocked = `${label} firmware on ESP32-${chip} is not a supported combination, updates are blocked.`;
-    } else if (FW_LEGACY_HW[label] && !FW_DEV) {   // dev: можно шить файлы со старой меткой
-      // старая метка: плата по BLE примет только файл со старой меткой
-      flashBlocked = `Firmware older than ${FW_NEW_LABELS_FROM}: update it once over USB (Flash Tool), after that Bluetooth updates work.`;
+    } else if (!fwBleAccepts(target.hw, label, fwDeviceVersion(version))) {
+      // старая прошивка со строгой меткой: файлы с сайта (GEN…) не примет, нужен переходный
+      hint = `This board accepts only ${label} files over Bluetooth: flash the transition firmware ` +
+             `${label}_v${FW_LEGACY_ALIAS_FROM}_${chip}.bin from file first (or update over USB).`;
     }
     const NOT_REPORTED = 'not reported';
     document.getElementById('devBoard').textContent = target ? target.title : (chip ? 'ESP32-' + chip : NOT_REPORTED);
@@ -1684,14 +1697,14 @@ function fwFillBoardSelect(sel) {
       : NOT_REPORTED;
     document.getElementById('devFw').textContent = version || NOT_REPORTED;
     document.getElementById('deviceCard').style.display = 'block';
-    document.getElementById('otaCheckStatus').textContent = flashBlocked || '';
+    document.getElementById('otaCheckStatus').textContent = flashBlocked || hint;
     document.querySelectorAll('#otaCheckBtn, #otaDownloadFlashBtn, #otaFileFlashBtn').forEach(b => { b.disabled = !!flashBlocked; });
     if (target) document.getElementById('usbBoardSel').value = detectedBoard;   // подсказка для USB
   }
 
   // версия прошивки на подключённой плате без суффикса чипа: "2.16.14"
-  function fwDeviceVersion() {
-    const m = /(\d+\.\d+\.\d+)/.exec(document.getElementById('fwVersionSpan').textContent || '');
+  function fwDeviceVersion(text) {
+    const m = /(\d+\.\d+\.\d+)/.exec(text || document.getElementById('fwVersionSpan').textContent || '');
     return m ? m[1] : null;
   }
 
@@ -1773,6 +1786,16 @@ function fwFillBoardSelect(sel) {
     await new Promise(r => setTimeout(r, 300));
     await ctrl.startNotifications();
 
+    // Плата сама прерывает запись (чужое железо, ошибка распаковки или записи) и шлёт
+    // ERROR:… сразу. Ловим это во время отправки, иначе видно только следствие — «lost data».
+    let boardError = null;
+    const errWatch = (e) => {
+      const msg = new TextDecoder().decode(e.target.value);
+      if (msg.startsWith('ERROR')) boardError = msg.replace(/^ERROR:\s*/, 'The board refused the update: ');
+    };
+    ctrl.addEventListener('characteristicvaluechanged', errWatch);
+    try {
+
     // Быстрая OTA (прошивка 2.16.11+): zlib-сжатие + запись без подтверждения.
     // Старые прошивки — как раньше: сырые куски по 496 байт с подтверждением.
     const devVer = (document.getElementById('fwVersionSpan').textContent.match(/(\d+)\.(\d+)\.(\d+)/) || []);
@@ -1819,6 +1842,7 @@ function fwFillBoardSelect(sel) {
 
     const eta = fwEta();
     for (let offset = 0, i = 0; offset < total; offset += chunkSize, i++) {
+      if (boardError) throw new Error(boardError);
       const chunk = payload.slice(offset, Math.min(offset + chunkSize, total));
       if (fast) await sendFast(chunk, i);
       else      await dataChar.writeValueWithResponse(chunk);
@@ -1830,6 +1854,9 @@ function fwFillBoardSelect(sel) {
       }
     }
 
+    await new Promise(r => setTimeout(r, 200));   // последнее ERROR от платы, если было
+    if (boardError) throw new Error(boardError);
+
     status.textContent = 'Applying firmware...';
     otaReloadOnDisconnect = true;
     const donePromise = waitFor('DONE', 12000);
@@ -1839,6 +1866,9 @@ function fwFillBoardSelect(sel) {
     status.textContent = '✓ Done! Device is rebooting...';
     // Страница перезагрузится при отключении платы; запас — если событие не придёт
     setTimeout(otaReloadPage, 5000);
+    } finally {
+      ctrl.removeEventListener('characteristicvaluechanged', errWatch);
+    }
   }
 
   let otaWriting = false, otaReloadOnDisconnect = false;
@@ -1849,7 +1879,7 @@ function fwFillBoardSelect(sel) {
     try {
       if (flashBlocked) throw new Error(flashBlocked);
       data = await getFirmware();
-      const info = fwCheckWithConfirm(data, detectedBoard, Object.assign({ ble: true, deviceVersion: fwDeviceVersion() }, checkOptions));
+      const info = fwCheckWithConfirm(data, detectedBoard, Object.assign({ ble: true, deviceVersion: fwDeviceVersion(), deviceLabel }, checkOptions));
       check.textContent = `${info.hw || 'Hardware not confirmed'} ${info.version || ''} for ${FW_BOARDS[detectedBoard].title}`;
     } catch(e) {
       check.textContent = '✗ ' + e.message;
@@ -1877,7 +1907,7 @@ function fwFillBoardSelect(sel) {
     const check = document.getElementById('otaCheckStatus');
     if (!file) { check.textContent = ''; return; }
     try {
-      const info = fwAssertFits(new Uint8Array(await file.arrayBuffer()), detectedBoard, { ble: true, deviceVersion: fwDeviceVersion() });
+      const info = fwAssertFits(new Uint8Array(await file.arrayBuffer()), detectedBoard, { ble: true, deviceVersion: fwDeviceVersion(), deviceLabel });
       check.textContent = `✓ ${info.hw} ${info.version || ''} fits this board`;
     } catch(err) {
       check.textContent = (err.unknownHardware ? '⚠ ' + err.message + '. You will be asked to confirm.' : '✗ ' + err.message);
@@ -2743,6 +2773,6 @@ requestAnimationFrame(tick);
   };
 })();
 </script>
-<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-17 18:14</p>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-17 18:26</p>
 </body>
 </html>
