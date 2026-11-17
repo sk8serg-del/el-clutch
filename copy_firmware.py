@@ -16,6 +16,10 @@ def copy_firmware(source, target, env):
     pioenv = env.subst("$PIOENV").lower()
     board = "S3" if "s3" in pioenv else "C3"
     hw = "GEN2" if (board == "S3" or pioenv.endswith("_can")) else "GEN1"
+    # переходная сборка со старой меткой (PLATFORMIO_BUILD_FLAGS=-DHW_LEGACY_LABEL) —
+    # в старые папки: firmware/CLUTCH_C3, CLUTCH_CAN_S3, CLUTCH_CAN_C3
+    if "HW_LEGACY_LABEL" in os.environ.get("PLATFORMIO_BUILD_FLAGS", ""):
+        hw = {"GEN1": "CLUTCH", "GEN2": "CLUTCH_CAN"}[hw]
     out_dir = os.path.join(project_dir, "firmware", "%s_%s" % (hw, board))
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, "%s_v%s_%s.bin" % (hw, version, board))
