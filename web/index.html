@@ -1,11 +1,36 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="refresh" content="0; url=Clutch%20and%20Throttle%20Settings.html">
-  <title>Stark Clutch Settings</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stark Clutch Tools</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f4f4f9; margin: 0; padding: 24px 16px; }
+    .container { max-width: 500px; margin: 0 auto; }
+    h1 { text-align: center; font-size: 26px; margin: 8px 0 24px; }
+    .tool {
+      display: block; background: white; border-radius: 10px; padding: 20px; margin-bottom: 12px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1); color: inherit; text-decoration: none;
+      border-left: 6px solid #4caf50;
+    }
+    .tool:hover, .tool:focus-visible { background: #f0f7f0; }
+    .tool.flash { border-left-color: #607d8b; }
+    .tool.flash:hover, .tool.flash:focus-visible { background: #f1f4f5; }
+    .tool b { display: block; font-size: 20px; margin-bottom: 6px; }
+    .tool span { display: block; font-size: 14px; line-height: 1.4; color: #666; }
+  </style>
 </head>
 <body>
-  <a href="Clutch%20and%20Throttle%20Settings.html">Open Stark Clutch Settings →</a>
+  <div class="container">
+    <h1>Stark Clutch</h1>
+    <a class="tool" href="Clutch%20and%20Throttle%20Settings.html">
+      <b>Settings</b>
+      <span>Curves, presets and calibration. Firmware update over Bluetooth. Works on phone and computer.</span>
+    </a>
+    <a class="tool flash" href="flash.html">
+      <b>USB Flash Tool</b>
+      <span>Firmware update over a USB cable. Chrome or Edge on a computer.</span>
+    </a>
+  </div>
 </body>
 </html>

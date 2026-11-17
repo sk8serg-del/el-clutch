@@ -39,17 +39,22 @@ jobs:
       - name: Build firmware S3
         run: pio run -e seeed_xiao_esp32s3
 
+      - name: Build firmware C3 on Gen 2 board
+        run: pio run -e seeed_xiao_esp32c3_can
+
       - name: Get firmware version
         id: ver
         run: |
-          VER=$(grep -oP '(?<=#define FW_VERSION_BASE ")[^"]+' src/ble2sensorsNVSEUGENE.ino)
+          VER=$(grep -oP '(?<=#define FW_VERSION_BASE ")[^"]+' src/StarkClutch.ino)
           echo "version=$VER" >> $GITHUB_OUTPUT
           echo "Version: $VER"
 
       - name: Rename firmware binaries
         run: |
-          cp .pio/build/seeed_xiao_esp32c3/firmware.bin firmware_c3.bin
-          cp .pio/build/seeed_xiao_esp32s3/firmware.bin firmware_s3.bin
+          # имя файла = поколение платы + чип (с 2.16.13)
+          cp .pio/build/seeed_xiao_esp32c3/firmware.bin     GEN1_C3.bin
+          cp .pio/build/seeed_xiao_esp32s3/firmware.bin     GEN2_S3.bin
+          cp .pio/build/seeed_xiao_esp32c3_can/firmware.bin GEN2_C3.bin
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -58,15 +63,15 @@ jobs:
           name: "Firmware v${{ steps.ver.outputs.version }}"
           body: "${{ steps.ver.outputs.version }}"
           files: |
-            firmware_c3.bin
-            firmware_s3.bin
+            GEN1_C3.bin
+            GEN2_S3.bin
+            GEN2_C3.bin
           make_latest: true
 
       - name: Store firmware in web for Pages serving
         run: |
           mkdir -p web/firmware/v${{ steps.ver.outputs.version }}
-          cp firmware_c3.bin web/firmware/v${{ steps.ver.outputs.version }}/firmware_c3.bin
-          cp firmware_s3.bin web/firmware/v${{ steps.ver.outputs.version }}/firmware_s3.bin
+          cp GEN1_C3.bin GEN2_S3.bin GEN2_C3.bin web/firmware/v${{ steps.ver.outputs.version }}/
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
           git add web/firmware/
