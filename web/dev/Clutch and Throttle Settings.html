@@ -1656,7 +1656,7 @@ function fwCheckWithConfirm(bytes, board, options) {
       const timer = setTimeout(() => rej(new Error('Timeout: ' + keyword)), timeoutMs);
       const handler = (e) => {
         const msg = new TextDecoder().decode(e.target.value);
-        if (msg === keyword || msg.startsWith('ERROR')) {
+        if (msg === keyword || msg.startsWith(keyword + ':') || msg.startsWith('ERROR')) {
           clearTimeout(timer);
           ctrl.removeEventListener('characteristicvaluechanged', handler);
           msg.startsWith('ERROR') ? rej(new Error(msg)) : res(msg);
@@ -1669,26 +1669,67 @@ function fwCheckWithConfirm(bytes, board, options) {
     await new Promise(r => setTimeout(r, 300));
     await ctrl.startNotifications();
 
+    // Быстрая OTA (прошивка 2.16.11+): zlib-сжатие + запись без подтверждения.
+    // Старые прошивки — как раньше: сырые куски по 496 байт с подтверждением.
+    const devVer = (document.getElementById('fwVersionSpan').textContent.match(/(\d+)\.(\d+)\.(\d+)/) || []);
+    const verNum = devVer.length ? (+devVer[1]) * 1e6 + (+devVer[2]) * 1e3 + (+devVer[3]) : 0;
+    const fast = verNum >= 2016011 && dataChar.properties && dataChar.properties.writeWithoutResponse
+                 && typeof CompressionStream !== 'undefined';
+
+    let payload = data, sendCmd = 'SIZE:' + size;
+    if (fast) {
+      status.textContent = 'Compressing...';
+      payload = new Uint8Array(await new Response(
+        new Blob([data]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer());
+      sendCmd = 'SIZEZ:' + size;
+    }
+    const total = payload.byteLength;
+
     status.textContent = 'Starting OTA...';
     const readyPromise = waitFor('READY');
-    await ctrl.writeValueWithResponse(new TextEncoder().encode('SIZE:' + size));
-    await readyPromise;
+    await ctrl.writeValueWithResponse(new TextEncoder().encode(sendCmd));
+    const readyMsg = await readyPromise;
     otaWriting = true;
-    status.textContent = `Sending ${(size / 1024).toFixed(0)} KB...`;
+
+    let chunkSize = CHUNK;
+    if (fast) {
+      const mtu = parseInt(readyMsg.split(':')[1]) || 23;
+      chunkSize = Math.max(20, Math.min(512, mtu - 3));   // без подтверждения кусок должен влезть в один пакет
+    }
+    status.textContent = fast
+      ? `Sending ${(total / 1024).toFixed(0)} KB (compressed from ${(size / 1024).toFixed(0)} KB)...`
+      : `Sending ${(size / 1024).toFixed(0)} KB...`;
+
+    const SYNC_EVERY = 24;   // каждый N-й кусок с подтверждением: держим очередь короткой
+    const sendFast = async (chunk, i) => {
+      if (i % SYNC_EVERY === SYNC_EVERY - 1) return dataChar.writeValueWithResponse(chunk);
+      for (let tries = 0; ; tries++) {
+        try { return await dataChar.writeValueWithoutResponse(chunk); }
+        catch (e) {
+          // очередь браузера/ОС занята — подождать и повторить, в крайнем случае с подтверждением
+          if (tries >= 5) return dataChar.writeValueWithResponse(chunk);
+          await new Promise(r => setTimeout(r, 20 * (tries + 1)));
+        }
+      }
+    };
 
     const eta = fwEta();
-    for (let offset = 0; offset < size; offset += CHUNK) {
-      const chunk = data.slice(offset, Math.min(offset + CHUNK, size));
-      await dataChar.writeValueWithResponse(chunk);
-      const pct = Math.round((offset + chunk.byteLength) / size * 100);
-      bar.value = pct;
-      pctTxt.textContent = `${pct}%  ·  ${((offset+chunk.byteLength)/1024).toFixed(0)} / ${(size/1024).toFixed(0)} KB` + eta(offset + chunk.byteLength, size);
+    for (let offset = 0, i = 0; offset < total; offset += chunkSize, i++) {
+      const chunk = payload.slice(offset, Math.min(offset + chunkSize, total));
+      if (fast) await sendFast(chunk, i);
+      else      await dataChar.writeValueWithResponse(chunk);
+      const done = offset + chunk.byteLength;
+      if (i % 8 === 0 || done === total) {
+        const pct = Math.round(done / total * 100);
+        bar.value = pct;
+        pctTxt.textContent = `${pct}%  ·  ${(done/1024).toFixed(0)} / ${(total/1024).toFixed(0)} KB` + eta(done, total);
+      }
     }
 
     status.textContent = 'Applying firmware...';
     otaReloadOnDisconnect = true;
     const donePromise = waitFor('DONE', 12000);
-    await ctrl.writeValueWithResponse(new TextEncoder().encode('APPLY'));
+    await ctrl.writeValueWithResponse(new TextEncoder().encode(fast ? 'APPLY:' + total : 'APPLY'));
     await donePromise;
     bar.value = 100; pctTxt.textContent = '100%';
     status.textContent = '✓ Done! Device is rebooting...';
@@ -2596,6 +2637,6 @@ requestAnimationFrame(tick);
   };
 })();
 </script>
-<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-16 23:24</p>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-17 10:56</p>
 </body>
 </html>
