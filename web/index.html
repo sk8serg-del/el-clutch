@@ -3,6 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Основной сайт сразу открывает настройки; меню инструментов — только в /dev/ -->
+  <script>
+    if (!/\/dev\//.test(location.pathname)) location.replace('Clutch%20and%20Throttle%20Settings.html');
+  </script>
   <title>Stark Clutch Tools</title>
   <style>
     body { font-family: Arial, sans-serif; background: #f4f4f9; margin: 0; padding: 24px 16px; }
