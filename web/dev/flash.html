@@ -193,7 +193,9 @@ function fwAssertFits(bytes, board, { trustedRelease = false, ble = false, devic
     throw new Error(`Wrong firmware: this file is for ${info.hw} hardware, connected board is ${target.title}`);
   if (ble && !fwBleAccepts(info.rawHw, deviceLabel, deviceVersion))
     throw new Error(`Over Bluetooth this board (firmware ${deviceVersion || '?'}, label ${deviceLabel}) accepts only ` +
-                    `${deviceLabel} files. ` + (FW_LEGACY_HW[deviceLabel]
+                    `${deviceLabel} files. ` + (!FW_DEV
+                      ? 'Update it once over USB (Flash Tool), after that Bluetooth updates work'
+                      : FW_LEGACY_HW[deviceLabel]
                       ? `Flash the transition firmware ${deviceLabel}_v${FW_LEGACY_ALIAS_FROM} first, or update over USB`
                       : `Update it to ${FW_LEGACY_ALIAS_FROM} or newer first, or use USB`));
   if (!info.hw && !trustedRelease) {
@@ -467,6 +469,6 @@ function fwFillBoardSelect(sel) {
     }
   });
 </script>
-<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-17 18:26</p>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-17 18:57</p>
 </body>
 </html>
