@@ -672,8 +672,10 @@ function fwInspect(bytes) {
 
 // Бросает с понятным сообщением, если файл нельзя шить на эту плату.
 // trustedRelease: файл из своих релизов (имя файла уже = плата).
-// ble: запись по Bluetooth — плата сама сверит метку, старую (CLUTCH…) не примет.
-function fwAssertFits(bytes, board, { trustedRelease = false, ble = false } = {}) {
+// ble: запись по Bluetooth — плата сама сверит метку. Старое имя своего поколения
+// (CLUTCH / CLUTCH_CAN) плата принимает с 2.16.14 (deviceVersion — версия на плате).
+const FW_LEGACY_ALIAS_FROM = '2.16.14';
+function fwAssertFits(bytes, board, { trustedRelease = false, ble = false, deviceVersion = null } = {}) {
   const target = FW_BOARDS[board];
   if (!target) throw new Error('Cannot determine the connected board, flashing is blocked');
   const info = fwInspect(bytes);
@@ -681,8 +683,10 @@ function fwAssertFits(bytes, board, { trustedRelease = false, ble = false } = {}
     throw new Error(`Wrong firmware: this file is for ${info.chip ? 'ESP32-' + info.chip : 'another chip'}, connected board is ${target.title}`);
   if (info.hw && info.hw !== target.hw)
     throw new Error(`Wrong firmware: this file is for ${info.hw} hardware, connected board is ${target.title}`);
-  if (ble && info.rawHw && info.rawHw !== target.hw)
-    throw new Error(`Firmware ${info.version || ''} is older than ${FW_NEW_LABELS_FROM}: it can be flashed only over USB`);
+  if (ble && info.rawHw && info.rawHw !== target.hw &&
+      !(deviceVersion && fwVersionAtLeast(deviceVersion, FW_LEGACY_ALIAS_FROM)))
+    throw new Error(`Firmware ${info.version || ''} is older than ${FW_NEW_LABELS_FROM}: this board accepts it only over USB ` +
+                    `(over Bluetooth from firmware ${FW_LEGACY_ALIAS_FROM} on the board)`);
   if (!info.hw && !trustedRelease) {
     const e = new Error(`This old firmware file does not say which hardware it is for (this board is ${target.title})`);
     e.unknownHardware = true;  // чип совпал, железо неизвестно: решает пользователь
@@ -1685,6 +1689,12 @@ function fwFillBoardSelect(sel) {
     if (target) document.getElementById('usbBoardSel').value = detectedBoard;   // подсказка для USB
   }
 
+  // версия прошивки на подключённой плате без суффикса чипа: "2.16.14"
+  function fwDeviceVersion() {
+    const m = /(\d+\.\d+\.\d+)/.exec(document.getElementById('fwVersionSpan').textContent || '');
+    return m ? m[1] : null;
+  }
+
   function fwReleasePath(board, selected) {
     const target = FW_BOARDS[board];
     if (!target) throw new Error('Unknown board');
@@ -1839,7 +1849,7 @@ function fwFillBoardSelect(sel) {
     try {
       if (flashBlocked) throw new Error(flashBlocked);
       data = await getFirmware();
-      const info = fwCheckWithConfirm(data, detectedBoard, Object.assign({ ble: true }, checkOptions));
+      const info = fwCheckWithConfirm(data, detectedBoard, Object.assign({ ble: true, deviceVersion: fwDeviceVersion() }, checkOptions));
       check.textContent = `${info.hw || 'Hardware not confirmed'} ${info.version || ''} for ${FW_BOARDS[detectedBoard].title}`;
     } catch(e) {
       check.textContent = '✗ ' + e.message;
@@ -1867,7 +1877,7 @@ function fwFillBoardSelect(sel) {
     const check = document.getElementById('otaCheckStatus');
     if (!file) { check.textContent = ''; return; }
     try {
-      const info = fwAssertFits(new Uint8Array(await file.arrayBuffer()), detectedBoard, { ble: true });
+      const info = fwAssertFits(new Uint8Array(await file.arrayBuffer()), detectedBoard, { ble: true, deviceVersion: fwDeviceVersion() });
       check.textContent = `✓ ${info.hw} ${info.version || ''} fits this board`;
     } catch(err) {
       check.textContent = (err.unknownHardware ? '⚠ ' + err.message + '. You will be asked to confirm.' : '✗ ' + err.message);
@@ -2733,6 +2743,6 @@ requestAnimationFrame(tick);
   };
 })();
 </script>
-<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-17 18:10</p>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-17 18:14</p>
 </body>
 </html>
