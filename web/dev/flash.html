@@ -172,10 +172,18 @@ function fwInspect(bytes) {
 
 // Бросает с понятным сообщением, если файл нельзя шить на эту плату.
 // trustedRelease: файл из своих релизов (имя файла уже = плата).
-// ble: запись по Bluetooth — плата сама сверит метку. Старое имя своего поколения
-// (CLUTCH / CLUTCH_CAN) плата принимает с 2.16.14 (deviceVersion — версия на плате).
+// ble: запись по Bluetooth — плата сама сверит метку файла со своей (deviceLabel):
+// до 2.16.14 — только точное совпадение, с 2.16.14 — любое имя своего поколения
+// (GEN1 = CLUTCH, GEN2 = CLUTCH_CAN). Плате со старой прошивкой нужен переходный
+// файл со старой меткой (firmware/CLUTCH_C3/CLUTCH_v2.16.14_C3.bin и т.п.).
 const FW_LEGACY_ALIAS_FROM = '2.16.14';
-function fwAssertFits(bytes, board, { trustedRelease = false, ble = false, deviceVersion = null } = {}) {
+function fwBleAccepts(fileLabel, deviceLabel, deviceVersion) {
+  if (!fileLabel || !deviceLabel) return true;   // без метки плата не проверяет
+  if (fileLabel === deviceLabel) return true;
+  return !!(deviceVersion && fwVersionAtLeast(deviceVersion, FW_LEGACY_ALIAS_FROM)
+            && fwNormHw(fileLabel) === fwNormHw(deviceLabel));
+}
+function fwAssertFits(bytes, board, { trustedRelease = false, ble = false, deviceVersion = null, deviceLabel = null } = {}) {
   const target = FW_BOARDS[board];
   if (!target) throw new Error('Cannot determine the connected board, flashing is blocked');
   const info = fwInspect(bytes);
@@ -183,10 +191,11 @@ function fwAssertFits(bytes, board, { trustedRelease = false, ble = false, devic
     throw new Error(`Wrong firmware: this file is for ${info.chip ? 'ESP32-' + info.chip : 'another chip'}, connected board is ${target.title}`);
   if (info.hw && info.hw !== target.hw)
     throw new Error(`Wrong firmware: this file is for ${info.hw} hardware, connected board is ${target.title}`);
-  if (ble && info.rawHw && info.rawHw !== target.hw &&
-      !(deviceVersion && fwVersionAtLeast(deviceVersion, FW_LEGACY_ALIAS_FROM)))
-    throw new Error(`Firmware ${info.version || ''} is older than ${FW_NEW_LABELS_FROM}: this board accepts it only over USB ` +
-                    `(over Bluetooth from firmware ${FW_LEGACY_ALIAS_FROM} on the board)`);
+  if (ble && !fwBleAccepts(info.rawHw, deviceLabel, deviceVersion))
+    throw new Error(`Over Bluetooth this board (firmware ${deviceVersion || '?'}, label ${deviceLabel}) accepts only ` +
+                    `${deviceLabel} files. ` + (FW_LEGACY_HW[deviceLabel]
+                      ? `Flash the transition firmware ${deviceLabel}_v${FW_LEGACY_ALIAS_FROM} first, or update over USB`
+                      : `Update it to ${FW_LEGACY_ALIAS_FROM} or newer first, or use USB`));
   if (!info.hw && !trustedRelease) {
     const e = new Error(`This old firmware file does not say which hardware it is for (this board is ${target.title})`);
     e.unknownHardware = true;  // чип совпал, железо неизвестно: решает пользователь
@@ -458,6 +467,6 @@ function fwFillBoardSelect(sel) {
     }
   });
 </script>
-<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-17 18:14</p>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-17 18:26</p>
 </body>
 </html>
