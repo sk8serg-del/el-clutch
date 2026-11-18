@@ -292,7 +292,7 @@
       </div>
 
       <div class="card">
-        <h3>Throttle Response <button class="info-btn" onclick="showInfo('Throttle Response','<p>The <b>main</b> throttle curve is the Gas line on the chart. The <b>soft</b> curve is made from it automatically: <b>Softness</b> cuts throttle at the start of travel and fades to full at 100% (Softness 50: 10% grip → 5.5%, 30% → 19.5%, 60% → 48%, 100% → 100%). Edit the main curve and the soft one follows. This chooses which one works.</p><p><b>Off:</b> main curve only, as before.</p><p><b>Twist speed:</b> slow twist = soft, sharp twist = main. After a sharp twist the main curve stays latched while the throttle is held or opened further; when you start closing, it returns to soft over Return time.</p><p><b>Wheel speed:</b> below Slow rpm = soft, above Fast rpm = main, blended in between. Needs the display link; without it = main.</p><p><b>Twist + wheel speed:</b> soft only when slow AND twisting gently — a sharp twist or speed gives the main curve.</p><p>The live bar shows which curve works now: 0 = soft, 100 = main. Use the live twist speed and wheel rpm to set thresholds.</p>')">i</button></h3>
+        <h3>Throttle Response <button class="info-btn" onclick="showInfo('Throttle Response','<p>The <b>main</b> throttle curve is the Gas line on the chart. The <b>soft</b> curve is made from it automatically: <b>Softness</b> cuts throttle at the start of travel and fades to full at 100% (Softness 50: 10% grip → 5.5%, 30% → 19.5%, 60% → 48%, 100% → 100%). Edit the main curve and the soft one follows. This chooses which one works.</p><p><b>Off:</b> main curve only, as before.</p><p><b>Twist speed:</b> slow twist = soft, sharp twist = main. After a sharp twist the main curve stays latched while the throttle is held or opened further; when you start closing, it returns to soft over Return time.</p><p>The live bar shows which curve works now: 0 = soft, 100 = main. Use the live twist speed to set the soft and main marks.</p>')">i</button></h3>
         <label>Mode</label>
         <select id="trModeSel" style="width:97%;padding:8px;font-size:15px;margin-bottom:8px;">
           <option value="1">Twist speed</option>
@@ -2653,10 +2653,16 @@ const IN = { gas: 0, lever: 0 };   // рычаг и газ — только с �
 // ── данные с платы: уведомления ~20 в секунду; между ними — линейно, шагами по 5 мс ──
 const LIVE = { q: [], last: null, rate: null, at: 0 };
 window.pvFeed = (lever, gas, rate) => {
+  if (document.hidden) return;   // вкладка в фоне: модель стоит, очередь не копим
   LIVE.q.push({ t: performance.now() / 1000, lever: Math.max(0, Math.min(100, lever)), gas: Math.max(0, Math.min(100, gas)) });
   LIVE.rate = rate; LIVE.at = performance.now();
 };
 const isLive = () => performance.now() - LIVE.at < 500;
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) return;
+  if (typeof muteEngineSound === 'function') muteEngineSound();
+  LIVE.q.length = 0; LIVE.last = null; LIVE.at = 0;
+});
 
 // ── живая модель, точка, измерители, звук ──
 const S = newEngine();
