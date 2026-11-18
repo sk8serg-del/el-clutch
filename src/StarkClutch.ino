@@ -23,7 +23,7 @@
 #include <soc/soc.h>
 #include <soc/rtc_cntl_reg.h>
 
-#define FW_VERSION_BASE "2.16.14"
+#define FW_VERSION_BASE "2.16.15"
 
 // ── Диагностика зависаний: "хлебные крошки" ──────────────────────────────
 // RTC_NOINIT_ATTR переживает программный ребут (watchdog/паника/сам ESP.restart),
@@ -443,8 +443,8 @@ BLECharacteristic* otaDataChar        = NULL;
 // ── Калибровка ──
 int   fullyPressedNVSValueA0  = 0;
 int   fullyReleasedNVSValueA0 = 0;
-int   fullyPressedNVSValueA1  = 500;
-int   fullyReleasedNVSValueA1 = 2000;
+int   fullyPressedNVSValueA1  = 2000;  // газ открыт, мВ (по умолчанию, пока не откалибровано)
+int   fullyReleasedNVSValueA1 = 500;   // газ закрыт, мВ
 bool  deviceConnected = false;
 static int bleConnCount = 0;  // число активных BLE-клиентов
 
@@ -455,24 +455,24 @@ double coefficients1[11]        = { 0,6,8,13,22,37,62,78,88,94,100 };
 double coefficients2[11]        = { 0,10,20,30,40,50,60,70,80,90,100 };
 
 // ── Flywheel параметры ──
-// Дефолты (2.15.6) — настройки, проверенные на CLUTCH_CAN 2026-11-13. Получают их только
+// Дефолты (2.16.15) = Recommended на странице настроек, 2026-11-18. Получают их только
 // пустые слоты пресетов (новая плата); сохранённые пресеты не меняются.
-float riseLoaded    = 281.0f;
-float fallLoaded    = 269.0f;
-float riseUnloaded  = 500.0f;
+float riseLoaded    = 262.0f;
+float fallLoaded    = 117.0f;
+float riseUnloaded  = 501.0f;
 float fallUnloaded  = 500.0f;
 float hangDuration  = 500.0f;
 float hangThreshold = 300.0f;   // скорость выжима рычага, %/с
-float snapBoost     = 1.38f;
-float snapThreshold = 400.0f;   // скорость отпускания рычага, %/с
+float snapBoost     = 1.30f;
+float snapThreshold = 640.0f;   // скорость отпускания рычага, %/с
 float snapDuration  = 500.0f;
 
 // ── Модель сцепления (на пресет, см. ClutchModelParams) ──
-float clutchRealism = 1.0f;
-float idlePct       = 4.0f;  // % от 500–2000 мВ: 4% = 560 мВ
+float clutchRealism = 0.52f;    // Clutch feel на странице
+float idlePct       = 6.0f;  // % от 500–2000 мВ: 6% = 590 мВ
 float idleFadeMs    = 500.0f;
 float startMv       = 500.0f;   // Clutch free play — не используется с 2.16.7, хранится ради совместимости
-float idleLevel     = 31.0f;    // Idle level: прибавка к 500 мВ при отпущенном рычаге и закрытом газе, мВ
+float idleLevel     = 58.0f;    // Idle level: прибавка к 500 мВ при отпущенном рычаге и закрытом газе, мВ
 #define IDLE_LEVEL_MAX    150.0f
 #define IDLE_LEVEL_TORQUE 100.0f  // выше этого Idle level даёт тягу и заменяет Idle power
 #define IDLE_FADE_MAX_MS  30000.0f
@@ -495,7 +495,7 @@ float flyLevel   = 0.0f;     // с 2.16.10: пик Clutch Snap за интерв
 BLECharacteristic* flyModeChar    = NULL;
 
 // ── Отклик газа (на пресет, см. ThrottleRespParams) ──
-float  trMode      = 1.0f;
+float  trMode      = 0.0f;   // Off — только основная кривая
 float  trTwistLow  = 400.0f;
 float  trTwistHigh = 1000.0f;
 float  trReturnMs  = 570.0f;
@@ -627,8 +627,13 @@ void writeIntToNVS(const char* key, int value) {
 }
 
 int readIntFromNVS(const char* key) {
+  return readIntFromNVSOr(key, 0);
+}
+
+// Значение из NVS или def, если ключа ещё нет (новая плата)
+int readIntFromNVSOr(const char* key, int def) {
   nvs_handle_t h;
-  int32_t value = 0;
+  int32_t value = def;
   nvs_open("storage", NVS_READWRITE, &h);
   nvs_get_i32(h, key, &value);
   nvs_close(h);
@@ -718,7 +723,7 @@ volatile bool presetLoading = false;
 
 Preset makeDefaultPreset() {
   Preset p;
-  p.fw = { 281.0f, 269.0f, 500.0f, 500.0f, 500.0f, 300.0f, 1.38f, 500.0f, 400.0f };
+  p.fw = { 262.0f, 117.0f, 501.0f, 500.0f, 500.0f, 300.0f, 1.30f, 500.0f, 640.0f };
   memcpy(p.coef1, defaultcoefficients1, sizeof(p.coef1));
   memcpy(p.coef2, defaultcoefficients2, sizeof(p.coef2));
   return p;
@@ -834,15 +839,15 @@ bool loadPreset(uint8_t slot) {
     nvs_close(h);
   }
   if (!ok) {
-    // Пустой слот (новая плата): все группы — дефолты 2.15.6. Значения совместимости
+    // Пустой слот (новая плата): все группы — дефолты 2.16.15. Значения совместимости
     // выше нужны только старым пресетам, у которых нет части blob'ов.
     applyPreset(makeDefaultPreset());
     arbEnabled = true;
     arbKp = 0.04f; arbKi = 0.23f; arbMaxOutput = 30.0f; arbClutchThr = 35.0f; arbRpmThr = -5.0f;
     arbRateRise = 300.0f; arbRateFall = 200.0f; arbRpmFilterCoef = 0.35f;
-    clutchRealism = 1.0f; idlePct = 4.0f; idleFadeMs = 500.0f; startMv = 500.0f; idleLevel = 31.0f;
+    clutchRealism = 0.52f; idlePct = 6.0f; idleFadeMs = 500.0f; startMv = 500.0f; idleLevel = 58.0f;
     flyPunch = 0.0f; flyRevUp = 210.0f; flyRevDown = 18.0f; flyDumpMs = 300.0f; flyMode = 1.0f;
-    trMode = 1.0f; trTwistLow = 400.0f; trTwistHigh = 1000.0f; trReturnMs = 570.0f;
+    trMode = 0.0f; trTwistLow = 400.0f; trTwistHigh = 1000.0f; trReturnMs = 570.0f;
     trSpdLow = 300.0f; trSpdHigh = 1000.0f; trSoftness = 0.32f;
   }
   // обновляем BLE характеристику
@@ -1771,8 +1776,8 @@ void setup() {
 
   fullyPressedNVSValueA0  = readIntFromNVS("fullyPressedA0");
   fullyReleasedNVSValueA0 = readIntFromNVS("fullyReleasedA0");
-  fullyPressedNVSValueA1  = readIntFromNVS("fullyPressedA1");
-  fullyReleasedNVSValueA1 = readIntFromNVS("fullyReleasedA1");
+  fullyPressedNVSValueA1  = readIntFromNVSOr("fullyPressedA1", fullyPressedNVSValueA1);
+  fullyReleasedNVSValueA1 = readIntFromNVSOr("fullyReleasedA1", fullyReleasedNVSValueA1);
 
   startupEndMs = millis() + BLE_POWER_RAMP_MS;
   bleClientHoldOffUntil = startupEndMs;  // к дисплею — на полной мощности
