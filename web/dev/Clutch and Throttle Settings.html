@@ -1410,18 +1410,18 @@ function fwFillBoardSelect(sel) {
   // прошивке 2.15.6+) и сохраняет его. Калибровка датчиков и другие пресеты не меняются.
   // Значения в единицах прошивки: для float_pct — доля, а не проценты ползунка.
   const RECOMMENDED = {
-    cl_realism: 1.0,  cl_idleLevel: 31, cl_idle: 4, cl_idleFade: 500,
+    cl_realism: 0.52, cl_idleLevel: 58, cl_idle: 6, cl_idleFade: 500,
     tr_softness: 0.32,  tr_return: 570,
     tr_spdLow: 300, tr_spdHigh: 1000,
     fly_punch: 0, fly_revUp: 210, fly_revDown: 18, fly_dump: 300,
-    fw_riseLoaded: 281, fw_fallLoaded: 269, fw_riseUnloaded: 500, fw_fallUnloaded: 269,
-    fw_snapBoost: 1.38, fw_snapThreshold: 400, fw_snapFall: 500,
+    fw_riseLoaded: 262, fw_fallLoaded: 117, fw_riseUnloaded: 501, fw_fallUnloaded: 269,
+    fw_snapBoost: 1.30, fw_snapThreshold: 640, fw_snapFall: 500,
     tr_twistLow: 400, tr_twistHigh: 1000,
     arb_kp: 0.04, arb_ki: 0.23, arb_maxOut: 30, arb_clutchThr: 35, arb_rpmThr: -5,
     arb_rateRise: 300, arb_rateFall: 200, arb_rpmFilter: 0.35,
   };
   const RECOMMENDED_FLY_MODE = 1;   // Virtual Flywheel
-  const RECOMMENDED_TR_MODE  = 1;   // по скорости поворота ручки
+  const RECOMMENDED_TR_MODE  = 0;   // Off — только основная кривая
   const RECOMMENDED_ARB      = true;
 
   document.getElementById('loadRecommendedBtn').addEventListener('click', async () => {
@@ -2815,7 +2815,7 @@ requestAnimationFrame(tick);
   };
 })();
 </script>
-<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-18 17:33</p>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-18 17:36</p>
 </body><div style="position:fixed; inset:0; border:4px solid #e53935; pointer-events:none; z-index:2147483647;"></div>
 <div style="position:fixed; top:0; left:50%; transform:translateX(-50%); background:#e53935; color:#fff; font:bold 11px/1 Arial,sans-serif; letter-spacing:1px; padding:3px 10px 4px; border-radius:0 0 6px 6px; pointer-events:none; z-index:2147483647;">DEV</div>
 
