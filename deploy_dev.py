@@ -57,6 +57,15 @@ DEV_LINKS = (
     '    </a>\n'
 )
 
+# Красная рамка по краю экрана (как service mode): сразу видно, что это dev-копия.
+# pointer-events:none — рамка не мешает нажатиям и прокрутке.
+DEV_FRAME = (
+    '<div style="position:fixed; inset:0; border:4px solid #e53935; pointer-events:none; z-index:2147483647;"></div>\n'
+    '<div style="position:fixed; top:0; left:50%; transform:translateX(-50%); background:#e53935; color:#fff;'
+    ' font:bold 11px/1 Arial,sans-serif; letter-spacing:1px; padding:3px 10px 4px; border-radius:0 0 6px 6px;'
+    ' pointer-events:none; z-index:2147483647;">DEV</div>\n'
+)
+
 os.makedirs(dev_dir, exist_ok=True)
 for page, src in PAGES.items():
     with open(src, encoding="utf-8", newline="") as f:
@@ -71,7 +80,7 @@ for page, src in PAGES.items():
         html = html[:at] + "\n<script>window.FW_DEV = true; window.FW_BASE = '../';</script>" + html[at:]
     at = html.rindex("</body>")
     with open(os.path.join(dev_dir, page), "w", encoding="utf-8", newline="") as f:
-        f.write(html[:at] + footer + html[at + len("</body>"):])
+        f.write(html[:at] + footer + DEV_FRAME + html[at + len("</body>"):])
 
 if dry:
     print("Dry run, nothing sent: " + dev_dir + " (" + stamp + ")")
