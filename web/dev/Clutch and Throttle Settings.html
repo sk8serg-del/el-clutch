@@ -220,10 +220,15 @@
       <span style="color:#888; display:none;" class="hwPathRow">Path</span>
       <span style="display:none;" class="hwPathRow">
         <b id="hwPathNow">—</b><br>
-        <select id="hwPathSel" style="margin-top:4px; padding:4px; font-size:14px;">
-          <option value="1">GEN1 · ESP32 ADC + MCP4725</option>
-          <option value="2">GEN2 · ADS1115 + MCP4728</option>
-          <option value="0">Auto (GEN2 if ADS1115 answers)</option>
+        <select id="hwInSel" style="margin-top:4px; padding:4px; font-size:14px;">
+          <option value="1">Input: ESP32 ADC (GEN1)</option>
+          <option value="2">Input: ADS1115 (GEN2)</option>
+          <option value="0">Input: auto</option>
+        </select>
+        <select id="hwOutSel" style="margin-top:4px; padding:4px; font-size:14px;">
+          <option value="1">Output: MCP4725 (GEN1)</option>
+          <option value="2">Output: MCP4728 (GEN2)</option>
+          <option value="0">Output: auto</option>
         </select>
         <button id="hwPathBtn" style="padding:4px 10px; font-size:14px;">Switch</button>
       </span>
@@ -1734,26 +1739,31 @@ function fwFillBoardSelect(sel) {
     if (target) document.getElementById('usbBoardSel').value = detectedBoard;   // подсказка для USB
   }
 
-  // Плата DUAL: какой путь работает (GEN1 / GEN2) и переключение на ходу, без перезагрузки.
-  // Неактивный ЦАП плата держит в power-down. Калибровка у каждого пути своя, остальное общее.
+  // Плата DUAL: вход (АЦП ESP32 / ADS1115) и выход (MCP4725 / MCP4728) выбираются отдельно —
+  // 4 комбинации, чтобы по ощущениям найти слабое звено. Переключение на ходу, без перезагрузки.
+  // Неактивный ЦАП плата держит в power-down. Калибровка своя у каждого входа, остальное общее.
   let charHwPath = null;
   async function showHwPath() {
     charHwPath = await tryGetChar(UUID_HW_PATH);
     document.querySelectorAll('.hwPathRow').forEach(el => { el.style.display = charHwPath ? '' : 'none'; });
     if (!charHwPath) return;
     const v = await q.run(() => charHwPath.readValue());
-    const active = v.getUint8(0), saved = v.byteLength > 1 ? v.getUint8(1) : active;
-    const NAMES = { 1: 'GEN1 · ESP32 ADC + MCP4725', 2: 'GEN2 · ADS1115 + MCP4728' };
-    document.getElementById('hwPathNow').textContent = (NAMES[active] || '?') + (saved ? '' : ' (auto)');
-    document.getElementById('hwPathSel').value = String(saved);
+    // 4 байта [вход, выход, сохр. вход, сохр. выход]; прошивка с одним путём — 2 байта [путь, сохр.]
+    const b = i => v.getUint8(i);
+    const [inA, outA, inS, outS] = v.byteLength >= 4 ? [b(0), b(1), b(2), b(3)] : [b(0), b(0), b(1), b(1)];
+    const IN = { 1: 'ESP32 ADC', 2: 'ADS1115' }, OUT = { 1: 'MCP4725', 2: 'MCP4728' };
+    document.getElementById('hwPathNow').textContent =
+      (IN[inA] || '?') + (inS ? '' : ' (auto)') + ' → ' + (OUT[outA] || '?') + (outS ? '' : ' (auto)');
+    document.getElementById('hwInSel').value = String(inS);
+    document.getElementById('hwOutSel').value = String(outS);
   }
   document.getElementById('hwPathBtn').addEventListener('click', async () => {
     if (!charHwPath) return;
-    const v = +document.getElementById('hwPathSel').value;
-    // Плата переключает путь на ходу: новый ЦАП сразу получает текущее значение, старый
-    // уходит в power-down, калибровка — своего пути
+    const vin = +document.getElementById('hwInSel').value, vout = +document.getElementById('hwOutSel').value;
+    // Плата переключает на ходу: новый ЦАП сразу получает текущее значение, старый
+    // уходит в power-down; при смене входа — калибровка этого входа
     try {
-      await q.run(() => charHwPath.writeValue(new Uint8Array([v])));
+      await q.run(() => charHwPath.writeValue(new Uint8Array([vin, vout])));
       await new Promise(r => setTimeout(r, 300));
       await showHwPath();
     } catch (e) { alert('Could not switch: ' + e.message); }
@@ -2891,7 +2901,7 @@ requestAnimationFrame(tick);
   };
 })();
 </script>
-<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-20 16:51</p>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-20 17:22</p>
 </body><div style="position:fixed; inset:0; border:4px solid #e53935; pointer-events:none; z-index:2147483647;"></div>
 <div style="position:fixed; top:0; left:50%; transform:translateX(-50%); background:#e53935; color:#fff; font:bold 11px/1 Arial,sans-serif; letter-spacing:1px; padding:3px 10px 4px; border-radius:0 0 6px 6px; pointer-events:none; z-index:2147483647;">DEV</div>
 
