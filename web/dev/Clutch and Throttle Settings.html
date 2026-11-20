@@ -209,6 +209,7 @@
     <button id="disconnectBleButton">Disconnect</button>
   </div>
   <p>State: <strong><span id="bleState" style="color:#d13a30;">Disconnected</span></strong> <span id="bleLag" class="dev-only" style="font-size:12px; color:#888;"></span> <span id="updNote" style="font-size:13px;"></span></p>
+  <p id="connTiming" class="dev-only" style="font-size:12px; color:#888; margin-top:-8px;"></p>
 
   <!-- Что подключено: заполняется после подключения -->
   <div class="card dev-only" id="deviceCard" style="display:none; font-size:14px;">
@@ -2254,21 +2255,37 @@ function fwFillBoardSelect(sel) {
   }
 
   // ── Подключение ──
+  // Замер этапов (видно только в dev): на телефоне подключение дольше, чем на ноутбуке
+  let connT = [];
+  function connMark(name) {
+    connT.push([name, performance.now()]);
+    const parts = [];
+    for (let i = 1; i < connT.length; i++)
+      parts.push(connT[i][0] + ' ' + ((connT[i][1] - connT[i - 1][1]) / 1000).toFixed(1));
+    document.getElementById('connTiming').textContent = 'connect: ' + parts.join(' · ') +
+      '  = ' + ((connT[connT.length - 1][1] - connT[1][1]) / 1000).toFixed(1) + ' s after pick';
+  }
   document.getElementById('connectBleButton').addEventListener('click', async () => {
     try {
       initAudio();
+      connT = [['click', performance.now()]];
+      document.getElementById('connTiming').textContent = '';
       const device = await navigator.bluetooth.requestDevice({
         filters: [{ name: 'Stark_Clutch' }],
         optionalServices: [SERVICE_UUID]
       });
+      connMark('pick');
       connectError = null;
       bleDevice = device;
       bleDevice.addEventListener('gattserverdisconnected', resetBleState);
       const server = await bleDevice.gatt.connect();
+      connMark('gatt');
       service = await server.getPrimaryService(SERVICE_UUID);
+      connMark('service');
       charMap = new Map();
       try { charMap = new Map((await service.getCharacteristics()).map(c => [c.uuid, c])); }
       catch(e) { console.error('getCharacteristics', e); }
+      connMark('chars');
 
       charSensor   = await tryGetChar(UUID_SENSOR);
       charCommand  = await tryGetChar(UUID_COMMAND);
@@ -2314,9 +2331,11 @@ function fwFillBoardSelect(sel) {
 
       // Уведомления датчиков (20 Гц) включаются в конце — во время начальной
       // загрузки они только занимали эфир и тормозили чтения
+      connMark('ui');
       try { await fetchChartFromBle(); } catch(e) {}
       if (charEmergency)           { try { await fetchEmergencyMode(); } catch(e) {} }
       try { await loadFWSliders(); } catch(e) {}
+      connMark('settings');
       if (charArbEnabled) {
         try {
           const v = await q.run(() => charArbEnabled.readValue());
@@ -2367,9 +2386,11 @@ function fwFillBoardSelect(sel) {
       try { await showHwPath(); } catch(e) { console.error('hw path', e); }
       checkUpdateOnConnect(fwVersion);
 
+      connMark('reads');
       resetLag();
       charSensor.addEventListener('characteristicvaluechanged', onSensorData);
       try { await q.run(() => charSensor.startNotifications()); } catch(e) { console.error('sensor notify', e); }
+      connMark('live');
 
       if (bleDevice.gatt.connected) document.getElementById('pageContent').classList.remove('mode-switching');
 
@@ -2861,7 +2882,7 @@ requestAnimationFrame(tick);
   };
 })();
 </script>
-<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-20 16:08</p>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-20 16:47</p>
 </body><div style="position:fixed; inset:0; border:4px solid #e53935; pointer-events:none; z-index:2147483647;"></div>
 <div style="position:fixed; top:0; left:50%; transform:translateX(-50%); background:#e53935; color:#fff; font:bold 11px/1 Arial,sans-serif; letter-spacing:1px; padding:3px 10px 4px; border-radius:0 0 6px 6px; pointer-events:none; z-index:2147483647;">DEV</div>
 
