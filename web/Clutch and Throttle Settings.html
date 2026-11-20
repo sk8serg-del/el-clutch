@@ -208,6 +208,7 @@
     <button id="disconnectBleButton">Disconnect</button>
   </div>
   <p>State: <strong><span id="bleState" style="color:#d13a30;">Disconnected</span></strong> <span id="bleLag" class="dev-only" style="font-size:12px; color:#888;"></span> <span id="updNote" style="font-size:13px;"></span></p>
+  <p id="connTiming" class="dev-only" style="font-size:12px; color:#888; margin-top:-8px;"></p>
 
   <!-- Что подключено: заполняется после подключения -->
   <div class="card dev-only" id="deviceCard" style="display:none; font-size:14px;">
@@ -215,6 +216,16 @@
       <span style="color:#888;">Board</span><b id="devBoard">—</b>
       <span style="color:#888;">Hardware</span><b id="devHw">—</b>
       <span style="color:#888;">Firmware</span><b id="devFw">—</b>
+      <span style="color:#888; display:none;" class="hwPathRow">Path</span>
+      <span style="display:none;" class="hwPathRow">
+        <b id="hwPathNow">—</b><br>
+        <select id="hwPathSel" style="margin-top:4px; padding:4px; font-size:14px;">
+          <option value="1">GEN1 · ESP32 ADC + MCP4725</option>
+          <option value="2">GEN2 · ADS1115 + MCP4728</option>
+          <option value="0">Auto (GEN2 if ADS1115 answers)</option>
+        </select>
+        <button id="hwPathBtn" style="padding:4px 10px; font-size:14px;">Switch</button>
+      </span>
     </div>
   </div>
 
@@ -606,6 +617,9 @@ const FW_NEW_LABELS_FROM = '2.16.13';
 // проверяет чип и метку сама; по USB проверок на плате нет.
 const FW_DEV  = !!window.FW_DEV;
 const FW_BASE = window.FW_BASE || '';
+// Стендовая плата DUAL (обе обвязки на одной XIAO, путь GEN1/GEN2 выбирается со страницы):
+// только dev, в релизы не входит — файл берётся вручную (firmware/DUAL_C3/…).
+if (FW_DEV) FW_BOARDS.DUAL_C3 = { hw: 'DUAL', chip: 'C3', title: 'Dual · XIAO ESP32-C3 (bench)', parts: 'GEN1 + GEN2 paths', file: 'DUAL_C3.bin' };
 
 function fwNormHw(hw) { return hw ? (FW_LEGACY_HW[hw] || hw) : null; }
 function fwBoardKey(hw, chip) {
@@ -800,6 +814,7 @@ function fwFillBoardSelect(sel) {
   const UUID_OTA_CTRL         = '19b10021-e8f2-537e-4f6c-d104768a1214';
   const UUID_OTA_DATA         = '19b10022-e8f2-537e-4f6c-d104768a1214';
   const UUID_HW_BOARD         = '19b10051-e8f2-537e-4f6c-d104768a1214';
+  const UUID_HW_PATH          = '19b10052-e8f2-537e-4f6c-d104768a1214';   // только плата DUAL
   const UUID_ENW_LOCKED       = '19b10060-e8f2-537e-4f6c-d104768a1214';
   const UUID_ARB_KP           = '19b10040-e8f2-537e-4f6c-d104768a1214';
   const UUID_ARB_KI           = '19b10041-e8f2-537e-4f6c-d104768a1214';
@@ -825,7 +840,12 @@ function fwFillBoardSelect(sel) {
       this.busy = true;
       await new Promise(r => setTimeout(r, 10));
       const { op, res, rej } = this.queue.shift();
-      try { res(await op()); } catch(e) { rej(e); } finally { this.busy = false; this.next(); }
+      // Таймаут: на телефоне отдельная операция GATT может не вернуться никогда, и без него
+      // вставала вся очередь — после подключения не включались живые данные
+      let timer;
+      const timeout = new Promise((_, r) => { timer = setTimeout(() => r(new Error('BLE operation timeout')), 5000); });
+      try { res(await Promise.race([op(), timeout])); } catch(e) { rej(e); }
+      finally { clearTimeout(timer); this.busy = false; this.next(); }
     }
   }
   const q = new BLEQueue();
@@ -1713,6 +1733,31 @@ function fwFillBoardSelect(sel) {
     if (target) document.getElementById('usbBoardSel').value = detectedBoard;   // подсказка для USB
   }
 
+  // Плата DUAL: какой путь работает (GEN1 / GEN2) и переключение на ходу, без перезагрузки.
+  // Неактивный ЦАП плата держит в power-down. Калибровка у каждого пути своя, остальное общее.
+  let charHwPath = null;
+  async function showHwPath() {
+    charHwPath = await tryGetChar(UUID_HW_PATH);
+    document.querySelectorAll('.hwPathRow').forEach(el => { el.style.display = charHwPath ? '' : 'none'; });
+    if (!charHwPath) return;
+    const v = await q.run(() => charHwPath.readValue());
+    const active = v.getUint8(0), saved = v.byteLength > 1 ? v.getUint8(1) : active;
+    const NAMES = { 1: 'GEN1 · ESP32 ADC + MCP4725', 2: 'GEN2 · ADS1115 + MCP4728' };
+    document.getElementById('hwPathNow').textContent = (NAMES[active] || '?') + (saved ? '' : ' (auto)');
+    document.getElementById('hwPathSel').value = String(saved);
+  }
+  document.getElementById('hwPathBtn').addEventListener('click', async () => {
+    if (!charHwPath) return;
+    const v = +document.getElementById('hwPathSel').value;
+    // Плата переключает путь на ходу: новый ЦАП сразу получает текущее значение, старый
+    // уходит в power-down, калибровка — своего пути
+    try {
+      await q.run(() => charHwPath.writeValue(new Uint8Array([v])));
+      await new Promise(r => setTimeout(r, 300));
+      await showHwPath();
+    } catch (e) { alert('Could not switch: ' + e.message); }
+  });
+
   // версия прошивки на подключённой плате без суффикса чипа: "2.16.14"
   function fwDeviceVersion(text) {
     const m = /(\d+\.\d+\.\d+)/.exec(text || document.getElementById('fwVersionSpan').textContent || '');
@@ -2214,21 +2259,37 @@ function fwFillBoardSelect(sel) {
   }
 
   // ── Подключение ──
+  // Замер этапов (видно только в dev): на телефоне подключение дольше, чем на ноутбуке
+  let connT = [];
+  function connMark(name) {
+    connT.push([name, performance.now()]);
+    const parts = [];
+    for (let i = 1; i < connT.length; i++)
+      parts.push(connT[i][0] + ' ' + ((connT[i][1] - connT[i - 1][1]) / 1000).toFixed(1));
+    document.getElementById('connTiming').textContent = 'connect: ' + parts.join(' · ') +
+      '  = ' + ((connT[connT.length - 1][1] - connT[1][1]) / 1000).toFixed(1) + ' s after pick';
+  }
   document.getElementById('connectBleButton').addEventListener('click', async () => {
     try {
       initAudio();
+      connT = [['click', performance.now()]];
+      document.getElementById('connTiming').textContent = '';
       const device = await navigator.bluetooth.requestDevice({
         filters: [{ name: 'Stark_Clutch' }],
         optionalServices: [SERVICE_UUID]
       });
+      connMark('pick');
       connectError = null;
       bleDevice = device;
       bleDevice.addEventListener('gattserverdisconnected', resetBleState);
       const server = await bleDevice.gatt.connect();
+      connMark('gatt');
       service = await server.getPrimaryService(SERVICE_UUID);
+      connMark('service');
       charMap = new Map();
       try { charMap = new Map((await service.getCharacteristics()).map(c => [c.uuid, c])); }
       catch(e) { console.error('getCharacteristics', e); }
+      connMark('chars');
 
       charSensor   = await tryGetChar(UUID_SENSOR);
       charCommand  = await tryGetChar(UUID_COMMAND);
@@ -2274,9 +2335,11 @@ function fwFillBoardSelect(sel) {
 
       // Уведомления датчиков (20 Гц) включаются в конце — во время начальной
       // загрузки они только занимали эфир и тормозили чтения
+      connMark('ui');
       try { await fetchChartFromBle(); } catch(e) {}
       if (charEmergency)           { try { await fetchEmergencyMode(); } catch(e) {} }
       try { await loadFWSliders(); } catch(e) {}
+      connMark('settings');
       if (charArbEnabled) {
         try {
           const v = await q.run(() => charArbEnabled.readValue());
@@ -2288,6 +2351,7 @@ function fwFillBoardSelect(sel) {
           });
         } catch(e) {}
       }
+      connMark('arb');
       if (charEnwLocked) {
         try {
           const v = await q.run(() => charEnwLocked.readValue());
@@ -2298,6 +2362,7 @@ function fwFillBoardSelect(sel) {
           });
         } catch(e) {}
       }
+      connMark('lock');
       if (charActiveMode) {
         try {
           const v = await q.run(() => charActiveMode.readValue());
@@ -2308,6 +2373,7 @@ function fwFillBoardSelect(sel) {
           });
         } catch(e) {}
       }
+      connMark('mode');
       // Прошивка до 2.13.0 метку не сообщает
       let hwLabel = null, fwVersion = null;
       const charHwBoard = await tryGetChar(UUID_HW_BOARD);
@@ -2324,11 +2390,15 @@ function fwFillBoardSelect(sel) {
       document.getElementById('hwBoardSpan').textContent = hwLabel || 'unknown';
       document.getElementById('fwVersionSpan').textContent = fwVersion || '—';
       try { showDeviceInfo(hwLabel, fwVersion); } catch(e) { console.error('device info', e); }
+      connMark('info');
+      try { await showHwPath(); } catch(e) { console.error('hw path', e); }
       checkUpdateOnConnect(fwVersion);
 
+      connMark('reads');
       resetLag();
       charSensor.addEventListener('characteristicvaluechanged', onSensorData);
       try { await q.run(() => charSensor.startNotifications()); } catch(e) { console.error('sensor notify', e); }
+      connMark('live');
 
       if (bleDevice.gatt.connected) document.getElementById('pageContent').classList.remove('mode-switching');
 

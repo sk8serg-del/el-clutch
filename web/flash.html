@@ -98,6 +98,9 @@ const FW_NEW_LABELS_FROM = '2.16.13';
 // проверяет чип и метку сама; по USB проверок на плате нет.
 const FW_DEV  = !!window.FW_DEV;
 const FW_BASE = window.FW_BASE || '';
+// Стендовая плата DUAL (обе обвязки на одной XIAO, путь GEN1/GEN2 выбирается со страницы):
+// только dev, в релизы не входит — файл берётся вручную (firmware/DUAL_C3/…).
+if (FW_DEV) FW_BOARDS.DUAL_C3 = { hw: 'DUAL', chip: 'C3', title: 'Dual · XIAO ESP32-C3 (bench)', parts: 'GEN1 + GEN2 paths', file: 'DUAL_C3.bin' };
 
 function fwNormHw(hw) { return hw ? (FW_LEGACY_HW[hw] || hw) : null; }
 function fwBoardKey(hw, chip) {
