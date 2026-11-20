@@ -216,6 +216,16 @@
       <span style="color:#888;">Board</span><b id="devBoard">—</b>
       <span style="color:#888;">Hardware</span><b id="devHw">—</b>
       <span style="color:#888;">Firmware</span><b id="devFw">—</b>
+      <span style="color:#888; display:none;" class="hwPathRow">Path</span>
+      <span style="display:none;" class="hwPathRow">
+        <b id="hwPathNow">—</b><br>
+        <select id="hwPathSel" style="margin-top:4px; padding:4px; font-size:14px;">
+          <option value="1">GEN1 · ESP32 ADC + MCP4725</option>
+          <option value="2">GEN2 · ADS1115 + MCP4728</option>
+          <option value="0">Auto (GEN2 if ADS1115 answers)</option>
+        </select>
+        <button id="hwPathBtn" style="padding:4px 10px; font-size:14px;">Apply &amp; restart</button>
+      </span>
     </div>
   </div>
 
@@ -607,6 +617,9 @@ const FW_NEW_LABELS_FROM = '2.16.13';
 // проверяет чип и метку сама; по USB проверок на плате нет.
 const FW_DEV  = !!window.FW_DEV;
 const FW_BASE = window.FW_BASE || '';
+// Стендовая плата DUAL (обе обвязки на одной XIAO, путь GEN1/GEN2 выбирается со страницы):
+// только dev, в релизы не входит — файл берётся вручную (firmware/DUAL_C3/…).
+if (FW_DEV) FW_BOARDS.DUAL_C3 = { hw: 'DUAL', chip: 'C3', title: 'Dual · XIAO ESP32-C3 (bench)', parts: 'GEN1 + GEN2 paths', file: 'DUAL_C3.bin' };
 
 function fwNormHw(hw) { return hw ? (FW_LEGACY_HW[hw] || hw) : null; }
 function fwBoardKey(hw, chip) {
@@ -801,6 +814,7 @@ function fwFillBoardSelect(sel) {
   const UUID_OTA_CTRL         = '19b10021-e8f2-537e-4f6c-d104768a1214';
   const UUID_OTA_DATA         = '19b10022-e8f2-537e-4f6c-d104768a1214';
   const UUID_HW_BOARD         = '19b10051-e8f2-537e-4f6c-d104768a1214';
+  const UUID_HW_PATH          = '19b10052-e8f2-537e-4f6c-d104768a1214';   // только плата DUAL
   const UUID_ENW_LOCKED       = '19b10060-e8f2-537e-4f6c-d104768a1214';
   const UUID_ARB_KP           = '19b10040-e8f2-537e-4f6c-d104768a1214';
   const UUID_ARB_KI           = '19b10041-e8f2-537e-4f6c-d104768a1214';
@@ -1714,6 +1728,27 @@ function fwFillBoardSelect(sel) {
     if (target) document.getElementById('usbBoardSel').value = detectedBoard;   // подсказка для USB
   }
 
+  // Плата DUAL: какой путь работает (GEN1 / GEN2) и переключение с перезагрузкой платы.
+  // Неактивный ЦАП плата держит в power-down. Калибровка у путей общая.
+  let charHwPath = null;
+  async function showHwPath() {
+    charHwPath = await tryGetChar(UUID_HW_PATH);
+    document.querySelectorAll('.hwPathRow').forEach(el => { el.style.display = charHwPath ? '' : 'none'; });
+    if (!charHwPath) return;
+    const v = await q.run(() => charHwPath.readValue());
+    const active = v.getUint8(0), saved = v.byteLength > 1 ? v.getUint8(1) : active;
+    const NAMES = { 1: 'GEN1 · ESP32 ADC + MCP4725', 2: 'GEN2 · ADS1115 + MCP4728' };
+    document.getElementById('hwPathNow').textContent = (NAMES[active] || '?') + (saved ? '' : ' (auto)');
+    document.getElementById('hwPathSel').value = String(saved);
+  }
+  document.getElementById('hwPathBtn').addEventListener('click', async () => {
+    if (!charHwPath) return;
+    const v = +document.getElementById('hwPathSel').value;
+    if (!confirm('The board will restart with the selected path. Throttle output goes to idle during the restart. Continue?')) return;
+    try { await q.run(() => charHwPath.writeValue(new Uint8Array([v]))); }
+    catch (e) { alert('Could not switch: ' + e.message); }
+  });
+
   // версия прошивки на подключённой плате без суффикса чипа: "2.16.14"
   function fwDeviceVersion(text) {
     const m = /(\d+\.\d+\.\d+)/.exec(text || document.getElementById('fwVersionSpan').textContent || '');
@@ -2325,6 +2360,7 @@ function fwFillBoardSelect(sel) {
       document.getElementById('hwBoardSpan').textContent = hwLabel || 'unknown';
       document.getElementById('fwVersionSpan').textContent = fwVersion || '—';
       try { showDeviceInfo(hwLabel, fwVersion); } catch(e) { console.error('device info', e); }
+      try { await showHwPath(); } catch(e) { console.error('hw path', e); }
       checkUpdateOnConnect(fwVersion);
 
       resetLag();
@@ -2821,7 +2857,7 @@ requestAnimationFrame(tick);
   };
 })();
 </script>
-<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-18 17:40</p>
+<p style="text-align:center; font-size:12px; color:#888; margin:16px 0;">dev build 2026-11-20 15:18</p>
 </body><div style="position:fixed; inset:0; border:4px solid #e53935; pointer-events:none; z-index:2147483647;"></div>
 <div style="position:fixed; top:0; left:50%; transform:translateX(-50%); background:#e53935; color:#fff; font:bold 11px/1 Arial,sans-serif; letter-spacing:1px; padding:3px 10px 4px; border-radius:0 0 6px 6px; pointer-events:none; z-index:2147483647;">DEV</div>
 
