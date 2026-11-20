@@ -23,7 +23,7 @@
 #include <soc/soc.h>
 #include <soc/rtc_cntl_reg.h>
 
-#define FW_VERSION_BASE "2.16.15"
+#define FW_VERSION_BASE "2.16.16"
 
 // ── Диагностика зависаний: "хлебные крошки" ──────────────────────────────
 // RTC_NOINIT_ATTR переживает программный ребут (watchdog/паника/сам ESP.restart),
@@ -626,6 +626,32 @@ void writeIntToNVS(const char* key, int value) {
   nvs_close(h);
 }
 
+// Ключ калибровки в NVS. На плате DUAL у входа ADS1115 своя калибровка: АЦП разные,
+// показания на одном датчике расходятся на 5–12 мВ. Остальные настройки у путей общие.
+// "fullyPressedA0" → "g2PressedA0" (ключ NVS — не длиннее 15 символов).
+const char* calKey(const char* key) {
+#if HW_IS_DUAL
+  if (hwInputActive() == 2) {
+    static char buf[4][16];
+    static uint8_t n = 0;
+    char* b = buf[n++ & 3];
+    snprintf(b, sizeof(buf[0]), "g2%s", key + 5);   // без "fully"
+    return b;
+  }
+#endif
+  return key;
+}
+
+int readIntFromNVSOr(const char* key, int def);
+
+// Калибровка из NVS (на DUAL — активного пути). Газ без калибровки: закрыт 500, открыт 2000 мВ.
+void loadCalibration() {
+  fullyPressedNVSValueA0  = readIntFromNVSOr(calKey("fullyPressedA0"), 0);
+  fullyReleasedNVSValueA0 = readIntFromNVSOr(calKey("fullyReleasedA0"), 0);
+  fullyPressedNVSValueA1  = readIntFromNVSOr(calKey("fullyPressedA1"), 2000);
+  fullyReleasedNVSValueA1 = readIntFromNVSOr(calKey("fullyReleasedA1"), 500);
+}
+
 int readIntFromNVS(const char* key) {
   return readIntFromNVSOr(key, 0);
 }
@@ -1022,6 +1048,29 @@ struct GuidedCal {
 };
 static GuidedCal gc;
 
+#if HW_IS_DUAL
+// Плата DUAL: вход (1 = АЦП ESP32, 2 = ADS1115) и выход (1 = MCP4725, 2 = MCP4728) отдельно.
+// Чтение: 4 байта [вход, выход, сохранённый вход, сохранённый выход] (сохранённый 0 = авто).
+// Запись: 2 байта [вход, выход] (1 байт — то же значение для обоих): сохранить и переключить
+// на ходу. Само переключение — в loop() (там же весь обмен по I2C), здесь только запрос.
+volatile bool    hwPathRequest = false;
+volatile uint8_t hwPathReqIn = 0, hwPathReqOut = 0;
+class HwPathCallbacks : public BLECharacteristicCallbacks {
+  void onRead(BLECharacteristic* c) {
+    uint8_t v[4] = { hwInputActive(), hwOutputActive(), hwInputSaved(), hwOutputSaved() };
+    c->setValue(v, 4);
+  }
+  void onWrite(BLECharacteristic* c) {
+    std::string v = c->getValue();
+    if (v.length() < 1) return;
+    uint8_t in = (uint8_t)v[0], out = v.length() > 1 ? (uint8_t)v[1] : in;
+    if (in > 2 || out > 2) return;
+    hwPathSave(in, out);
+    hwPathReqIn = in; hwPathReqOut = out; hwPathRequest = true;
+  }
+};
+#endif
+
 class GuidedCalCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic* c) override {
     if (c->getLength() < 1) return;
@@ -1157,24 +1206,25 @@ static bool otaInflate(const uint8_t* in, size_t inLen) {
 // ── Соединения со страницей/телефоном (2.16.12) ──
 // Телефон сам выбирает интервал связи и после гашения экрана/фона может уйти на
 // редкий обмен: уведомления копятся в очереди стека и приходят всё позже, пока
-// страницу не переподключат. Поэтому через 1 с после подключения (и по команде
+// страницу не переподключат. Поэтому сразу после подключения (и по команде
 // CONNFAST со страницы) просим 15-30 мс. Пока стек сообщает о перегрузке
 // (ESP_GATTS_CONGEST_EVT), новые уведомления сенсора не ставим в очередь.
 #define SRV_PEERS_MAX 4
-struct SrvPeer { bool used; uint16_t connId; esp_bd_addr_t bda; uint32_t reqAtMs; bool congested; };
+struct SrvPeer { bool used; uint16_t connId; esp_bd_addr_t bda; uint32_t reqAtMs; bool congested; bool discovery; };
 static SrvPeer srvPeers[SRV_PEERS_MAX] = {};
 static volatile bool srvFastReq = false;   // CONNFAST со страницы
 
 // без SrvPeer в сигнатуре: генератор прототипов .ino ставит их выше объявления структуры
-static void requestPeerFast(uint16_t connId, const uint8_t* bda) {
+// minInt/maxInt — в единицах 1,25 мс: 12/24 = 15–30 мс, 9/12 = 11,25–15 мс
+static void requestPeerFast(uint16_t connId, const uint8_t* bda, uint16_t minInt, uint16_t maxInt) {
   esp_ble_conn_update_params_t cp = {};
   memcpy(cp.bda, bda, sizeof(esp_bd_addr_t));
-  cp.min_int = 12;    // 15 мс
-  cp.max_int = 24;    // 30 мс
+  cp.min_int = minInt;
+  cp.max_int = maxInt;
   cp.latency = 0;
   cp.timeout = 400;   // 4 с
   esp_err_t e = esp_ble_gap_update_conn_params(&cp);
-  Serial.printf("[BLE] page conn %u: req 15-30ms err=%d\n", connId, (int)e);
+  Serial.printf("[BLE] page conn %u: req %u-%u x1.25ms err=%d\n", connId, minInt, maxInt, (int)e);
 }
 
 static bool srvAnyCongested() {
@@ -1194,7 +1244,17 @@ static void serviceSrvPeers() {
   bool all = srvFastReq; srvFastReq = false;
   for (auto& p : srvPeers) {
     if (!p.used) continue;
-    if (all || (p.reqAtMs && (int32_t)(now - p.reqAtMs) >= 0)) { p.reqAtMs = 0; requestPeerFast(p.connId, p.bda); }
+    if (p.reqAtMs && (int32_t)(now - p.reqAtMs) >= 0 && p.discovery) {
+      // Начало соединения: таблицу характеристик клиент читает на 11,25–15 мс (как режим
+      // CONNECTION_PRIORITY_HIGH самого Android — принимают все телефоны),
+      // через 3 с — обычные 15–30 мс
+      p.discovery = false;
+      p.reqAtMs = now + 3000; if (!p.reqAtMs) p.reqAtMs = 1;
+      requestPeerFast(p.connId, p.bda, 9, 12);
+    } else if (all || (p.reqAtMs && (int32_t)(now - p.reqAtMs) >= 0)) {
+      p.reqAtMs = 0;
+      requestPeerFast(p.connId, p.bda, 12, 24);
+    }
   }
 }
 
@@ -1204,7 +1264,12 @@ class MyServerCallbacks : public BLEServerCallbacks {
       for (auto& p : srvPeers) if (!p.used) {
         p.used = true; p.connId = param->connect.conn_id; p.congested = false;
         memcpy(p.bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
-        p.reqAtMs = millis() + 1000; if (!p.reqAtMs) p.reqAtMs = 1;
+        // Сразу (2.16.16): Android при каждом подключении заново читает всю таблицу
+        // характеристик (~110 записей) — на его стартовом интервале это 4–5 с. Просим
+        // 11,25–15 мс на время чтения: Android так быстрее, а Windows не замедляется (с 15–30 мс сразу —
+        // замедлялась с 0,3 до 1,4 с).
+        p.discovery = true;
+        p.reqAtMs = millis(); if (!p.reqAtMs) p.reqAtMs = 1;
         break;
       }
   }
@@ -1486,6 +1551,7 @@ void setup() {
   Wire.begin();
   Wire.setTimeOut(I2C_TIMEOUT_MS);    // не даёт I2C-транзакции блокироваться вечно при сбое шины
   initDacs();
+  Serial.printf("[BOOT] hw:%s\n", hwDiagText());   // какие ЦАПы найдены и на каких адресах
   Wire.setClock(400000);              // 400kHz для всех I2C устройств
   dacSetVoltage(DAC_IDLE_CODE);  // холостой уровень, а не 0 В, на всё время запуска
   initNVS();
@@ -1548,6 +1614,11 @@ void setup() {
   pService->createCharacteristic(
     "19b10051-e8f2-537e-4f6c-d104768a1214", BLECharacteristic::PROPERTY_READ)
     ->setValue(HW_BOARD);
+#if HW_IS_DUAL
+  pService->createCharacteristic(
+    "19b10052-e8f2-537e-4f6c-d104768a1214", BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE)
+    ->setCallbacks(new HwPathCallbacks());
+#endif
 
   sensorCharacteristic = pService->createCharacteristic(
     "19b10001-e8f2-537e-4f6c-d104768a1214",
@@ -1774,10 +1845,7 @@ void setup() {
   pService->start();
   BLEDevice::startAdvertising();
 
-  fullyPressedNVSValueA0  = readIntFromNVS("fullyPressedA0");
-  fullyReleasedNVSValueA0 = readIntFromNVS("fullyReleasedA0");
-  fullyPressedNVSValueA1  = readIntFromNVSOr("fullyPressedA1", fullyPressedNVSValueA1);
-  fullyReleasedNVSValueA1 = readIntFromNVSOr("fullyReleasedA1", fullyReleasedNVSValueA1);
+  loadCalibration();
 
   startupEndMs = millis() + BLE_POWER_RAMP_MS;
   bleClientHoldOffUntil = startupEndMs;  // к дисплею — на полной мощности
@@ -1923,11 +1991,11 @@ static bool guidedCalStep(bool sensorFault, int filtA0, int filtA1) {
       if (gc.target == 'C') {
         oldRel = fullyReleasedNVSValueA0; oldPr = fullyPressedNVSValueA0;
         fullyReleasedNVSValueA0 = rel; fullyPressedNVSValueA0 = pr;
-        writeIntToNVS("fullyReleasedA0", rel); writeIntToNVS("fullyPressedA0", pr);
+        writeIntToNVS(calKey("fullyReleasedA0"), rel); writeIntToNVS(calKey("fullyPressedA0"), pr);
       } else {
         oldRel = fullyReleasedNVSValueA1; oldPr = fullyPressedNVSValueA1;
         fullyReleasedNVSValueA1 = rel; fullyPressedNVSValueA1 = pr;
-        writeIntToNVS("fullyReleasedA1", rel); writeIntToNVS("fullyPressedA1", pr);
+        writeIntToNVS(calKey("fullyReleasedA1"), rel); writeIntToNVS(calKey("fullyPressedA1"), pr);
       }
       snprintf(gc.info, sizeof(gc.info), "rel=%d;pr=%d;oldRel=%d;oldPr=%d;r1=%d;r2=%d;hold=%d",
                rel, pr, oldRel, oldPr, gc.rest1, gc.rest2, gc.hold);
@@ -2020,6 +2088,14 @@ void loop() {
     otaNotifyPending = false;
     if (otaNotifyMsg == "DONE") { delay(300); ESP.restart(); }
   }
+#if HW_IS_DUAL
+  // Смена входа/выхода на ходу: ЦАП передаёт выход без провала, калибровка — своего входа
+  if (hwPathRequest) {
+    hwPathRequest = false;
+    if (hwPathSwitch(hwPathReqIn, hwPathReqOut)) loadCalibration();
+    Serial.printf("[HW]%s\n", hwDiagText());
+  }
+#endif
 
   // На время записи управление не работает: выход держим на холостом уровне.
   // Страница зависла и данные перестали идти — отменяем, как при обрыве связи.
@@ -2057,16 +2133,16 @@ void loop() {
     pendingCal = CAL_NONE;
     switch (cmd) {
       case CAL_PRESSED_A0:
-        fullyPressedNVSValueA0 = filtA0;  writeIntToNVS("fullyPressedA0", filtA0);
+        fullyPressedNVSValueA0 = filtA0;  writeIntToNVS(calKey("fullyPressedA0"), filtA0);
         sensorCharacteristic->setValue("Fully Pressed A0 Saved");   sensorCharacteristic->notify();   break;
       case CAL_RELEASED_A0:
-        fullyReleasedNVSValueA0 = filtA0; writeIntToNVS("fullyReleasedA0", filtA0);
+        fullyReleasedNVSValueA0 = filtA0; writeIntToNVS(calKey("fullyReleasedA0"), filtA0);
         sensorCharacteristic->setValue("Fully Released A0 Saved");  sensorCharacteristic->notify();   break;
       case CAL_PRESSED_A1:
-        fullyPressedNVSValueA1 = filtA1;  writeIntToNVS("fullyPressedA1", filtA1);
+        fullyPressedNVSValueA1 = filtA1;  writeIntToNVS(calKey("fullyPressedA1"), filtA1);
         sensorA1Characteristic->setValue("Fully Pressed A1 Saved");  sensorA1Characteristic->notify(); break;
       case CAL_RELEASED_A1:
-        fullyReleasedNVSValueA1 = filtA1; writeIntToNVS("fullyReleasedA1", filtA1);
+        fullyReleasedNVSValueA1 = filtA1; writeIntToNVS(calKey("fullyReleasedA1"), filtA1);
         sensorA1Characteristic->setValue("Fully Released A1 Saved"); sensorA1Characteristic->notify(); break;
     }
     Serial.printf("[CAL] cmd=%d A0=%d A1=%d\n", cmd, filtA0, filtA1);

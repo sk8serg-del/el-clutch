@@ -110,7 +110,8 @@ async def ota(client, data, ver):
 
 async def handle(dev, file_arg, dry):
     print(f'{dev.address}  ', end='')
-    async with BleakClient(dev, timeout=20) as c:
+    # без кэша Windows: после перепрошивки он может хранить старую таблицу характеристик
+    async with BleakClient(dev, timeout=20, winrt={"use_cached_services": False}) as c:
         ver, hw = await read_info(c)
         chip = (re.search(r'-([CS]3)', ver) or [None, None])[1]
         gen = LEGACY.get(hw, hw)

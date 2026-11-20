@@ -8,7 +8,24 @@
 #include <Arduino.h>
 #include <sdkconfig.h>
 
-#if defined(CONFIG_IDF_TARGET_ESP32C3) && defined(HW_C3_CAN)
+#if defined(CONFIG_IDF_TARGET_ESP32C3) && defined(HW_DUAL)
+  // Стендовая плата DUAL: одна XIAO ESP32-C3 и обе обвязки сразу — АЦП ESP32 + MCP4725
+  // (путь GEN1) и ADS1115 + MCP4728 (путь GEN2). Путь выбирается со страницы (характеристика
+  // 19b10052), хранится в NVS, меняется с перезагрузкой. Неактивный ЦАП — в power-down.
+  // MCP4725 здесь только на 0x61–0x63 (ножка A0 на VDD): 0x60 занят MCP4728.
+  #define HW_IS_DUAL 1
+  #define HW_IS_CLUTCH_CAN 0
+  #define HW_GEN_LABEL "DUAL"
+  #define HW_OLD_LABEL "DUAL"
+  #define HW_CHIP  "C3"
+  static const float FILTER_CLUTCH   = 0.2f;
+  static const float FILTER_GAS_FAST = 0.2f;
+  static const float FILTER_GAS_SLOW = 0.1f;
+  #define LOOP_DELAY_MS 1
+  #define LOOP_TASK_PRIORITY 18
+  #define FILTER_BY_TIME 0
+  #define HW_ADS_YIELD 1
+#elif defined(CONFIG_IDF_TARGET_ESP32C3) && defined(HW_C3_CAN)
   // Плата CLUTCH_CAN с XIAO ESP32-C3 вместо S3: ADS1115 + MCP4728.
   // Фильтры и цикл как на S3, чтобы разница была только в чипе.
   #define HW_IS_CLUTCH_CAN 1
@@ -68,7 +85,11 @@
   #define HW_BOARD_LEGACY HW_OLD_LABEL
 #endif
 
-// ── Реализация: hw_clutch.cpp или hw_clutch_can.cpp ──
+#ifndef HW_IS_DUAL
+  #define HW_IS_DUAL 0
+#endif
+
+// ── Реализация: hw_clutch.cpp или hw_clutch_can.cpp (на DUAL — обе, через hw_dual.cpp) ──
 void hwInitSensors();
 void initDacs();
 void dacSetVoltage(uint16_t value);
@@ -77,6 +98,33 @@ void dacSetVoltage(uint16_t value);
 bool hwReadSensors(int& rawA0, int& rawA1);
 // Дополнение к строке [DIAG]
 const char* hwDiagText();
+
+// На DUAL функции путей получают префикс g1_ / g2_, общие — в hw_dual.cpp
+#if HW_IS_DUAL
+  #define HW_G1(f) g1_##f
+  #define HW_G2(f) g2_##f
+  void g1_hwInitSensors();  void g1_initDacs();  void g1_dacSetVoltage(uint16_t value);
+  bool g1_hwReadSensors(int& rawA0, int& rawA1);  const char* g1_hwDiagText();
+  void g1_dacPowerDown();   // найти MCP4725 и перевести в power-down (500 кОм на землю)
+  void g2_hwInitSensors();  void g2_initDacs();  void g2_dacSetVoltage(uint16_t value);
+  bool g2_hwReadSensors(int& rawA0, int& rawA1);  const char* g2_hwDiagText();
+  void g2_dacPowerDown();   // все каналы MCP4728 в power-down (500 кОм на землю)
+  bool g2_adsPresent();
+  void g2_initDacsAt(uint16_t value);
+  // Вход: 1 = АЦП ESP32, 2 = ADS1115. Выход: 1 = MCP4725, 2 = MCP4728.
+  // Сохранённый выбор: 0 = авто (2, если ответил ADS1115)
+  uint8_t hwInputActive();
+  uint8_t hwOutputActive();
+  uint8_t hwInputSaved();
+  uint8_t hwOutputSaved();
+  void    hwPathSave(uint8_t in, uint8_t out);
+  // Переключить на ходу (только из loop()): новый ЦАП сразу получает текущее выходное
+  // значение, потом старый уходит в power-down. true — сменился вход (нужна его калибровка).
+  bool    hwPathSwitch(uint8_t in, uint8_t out);
+#else
+  #define HW_G1(f) f
+  #define HW_G2(f) f
+#endif
 
 // ── Из основного файла ──
 void i2cBusReset();

@@ -1,6 +1,6 @@
-// CLUTCH_CAN (XIAO ESP32-S3, или C3 с флагом HW_C3_CAN): ADS1115 + MCP4728
+// CLUTCH_CAN (XIAO ESP32-S3, или C3 с флагом HW_C3_CAN): ADS1115 + MCP4728. На DUAL — путь GEN2.
 #include "hw.h"
-#if HW_IS_CLUTCH_CAN
+#if HW_IS_CLUTCH_CAN || HW_IS_DUAL
 
 #include <Wire.h>
 #include <Adafruit_MCP4728.h>
@@ -61,9 +61,9 @@ static bool adsReadMv(uint8_t ch, int& mv) {
   return true;
 }
 
-void hwInitSensors() {}  // пины ESP32 не нужны, датчики на ADS1115
+void HW_G2(hwInitSensors)() {}  // пины ESP32 не нужны, датчики на ADS1115
 
-bool hwReadSensors(int& rawA0, int& rawA1) {
+bool HW_G2(hwReadSensors)(int& rawA0, int& rawA1) {
   // Единичный сбой — работаем на последних значениях. Серия сбоев — датчиков
   // больше нет: газ снимается, шина восстанавливается.
   static int     goodA0 = 0, goodA1 = 0;
@@ -92,16 +92,22 @@ bool hwReadSensors(int& rawA0, int& rawA1) {
   return !fault;
 }
 
-void initDacs() {
+// value — сразу на выход (на DUAL при переключении пути — текущее значение, без провала в 0)
+static void initDacsAt(uint16_t value) {
   dac.begin(0x60);
   // VREF = VDD, gain 1x — та же шкала, что у MCP4725 (полный код 4095 = питание DAC)
-  dac.setChannelValue(MCP4728_CHANNEL_A, 0, MCP4728_VREF_VDD, MCP4728_GAIN_1X);
-  dac.setChannelValue(MCP4728_CHANNEL_B, 0, MCP4728_VREF_VDD, MCP4728_GAIN_1X);
-  dac.setChannelValue(MCP4728_CHANNEL_C, 0, MCP4728_VREF_VDD, MCP4728_GAIN_1X);
-  dac.setChannelValue(MCP4728_CHANNEL_D, 0, MCP4728_VREF_VDD, MCP4728_GAIN_1X);
+  dac.setChannelValue(MCP4728_CHANNEL_A, value >> 1, MCP4728_VREF_VDD, MCP4728_GAIN_1X);
+  dac.setChannelValue(MCP4728_CHANNEL_B, value,      MCP4728_VREF_VDD, MCP4728_GAIN_1X);
+  dac.setChannelValue(MCP4728_CHANNEL_C, value >> 1, MCP4728_VREF_VDD, MCP4728_GAIN_1X);
+  dac.setChannelValue(MCP4728_CHANNEL_D, value >> 1, MCP4728_VREF_VDD, MCP4728_GAIN_1X);
 }
 
-void dacSetVoltage(uint16_t value) {
+void HW_G2(initDacs)() { initDacsAt(0); }
+#if HW_IS_DUAL
+void g2_initDacsAt(uint16_t value) { initDacsAt(value); }
+#endif
+
+void HW_G2(dacSetVoltage)(uint16_t value) {
   // LDAC на GND — выходы обновляются сразу, одна I2C-транзакция на все каналы
   static uint8_t i2cFailStreak = 0;
   if (!dac.fastWrite(value >> 1, value, value >> 1, value >> 1)) {  // A/C/D = /2, B = полный
@@ -119,10 +125,26 @@ void dacSetVoltage(uint16_t value) {
   }
 }
 
-const char* hwDiagText() {
+const char* HW_G2(hwDiagText)() {
   static char text[24];
   snprintf(text, sizeof(text), " adsErr=%lu", (unsigned long)diag_ads_err);
   return text;
 }
+
+#if HW_IS_DUAL
+// Все каналы MCP4728 в power-down: выход отключён, 500 кОм на землю. Обратно в работу
+// их вернёт первый fastWrite (биты PD = 00) — на DUAL он вызывается только на пути GEN2.
+void g2_dacPowerDown() {
+  if (!dac.begin(0x60)) return;
+  const MCP4728_channel_t ch[] = {MCP4728_CHANNEL_A, MCP4728_CHANNEL_B, MCP4728_CHANNEL_C, MCP4728_CHANNEL_D};
+  for (auto c : ch)
+    dac.setChannelValue(c, 0, MCP4728_VREF_VDD, MCP4728_GAIN_1X, MCP4728_PD_MODE_GND_500K);
+}
+
+bool g2_adsPresent() {
+  Wire.beginTransmission(ADS_ADDR);
+  return Wire.endTransmission() == 0;
+}
+#endif
 
 #endif
